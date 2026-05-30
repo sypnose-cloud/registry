@@ -42,11 +42,31 @@ command -v git  >/dev/null 2>&1 || fail "git required."
 ok "Node/npm/git present."
 
 # --- 2. Install trace-mcp (code graph indexer) ---
+# Use a user-level npm prefix so 'npm -g' never needs root (avoids EACCES when prefix is /usr).
+NPM_PREFIX="$(npm config get prefix 2>/dev/null)"
+if [ "$NPM_PREFIX" = "/usr" ] || [ "$NPM_PREFIX" = "/usr/local" ] || [ -z "$NPM_PREFIX" ]; then
+  mkdir -p "$HOME/.npm-global"
+  npm config set prefix "$HOME/.npm-global" 2>/dev/null || true
+  export PATH="$HOME/.npm-global/bin:$PATH"
+  info "Set user npm prefix -> $HOME/.npm-global (add it to your PATH permanently)."
+fi
+export PATH="$(npm config get prefix 2>/dev/null)/bin:$PATH"
 if ! command -v trace-mcp >/dev/null 2>&1; then
-  info "Installing trace-mcp (npm -g)..."
+  info "Installing trace-mcp (npm -g, user prefix)..."
   npm install -g trace-mcp 2>&1 | tail -1 || warn "trace-mcp global install had issues."
 fi
-command -v trace-mcp >/dev/null 2>&1 && ok "trace-mcp present." || warn "trace-mcp not on PATH — add ~/.npm-global/bin or npm bin -g to PATH."
+TRACE_BIN="$(command -v trace-mcp || echo "$HOME/.npm-global/bin/trace-mcp")"
+if [ -x "$TRACE_BIN" ] || command -v trace-mcp >/dev/null 2>&1; then
+  ok "trace-mcp present."
+  # better-sqlite3 ships native bindings; rebuild for this machine's Node (avoids "bindings file" error).
+  TRACE_MODDIR="$(npm root -g 2>/dev/null)/trace-mcp"
+  if [ -d "$TRACE_MODDIR/node_modules/better-sqlite3" ]; then
+    info "Rebuilding better-sqlite3 native bindings for this Node..."
+    ( cd "$TRACE_MODDIR" && npm rebuild better-sqlite3 2>&1 | tail -1 ) || warn "better-sqlite3 rebuild had issues - if indexing fails with 'bindings file', run: cd $TRACE_MODDIR && npm rebuild better-sqlite3"
+  fi
+else
+  warn "trace-mcp not on PATH - add \$(npm config get prefix)/bin to your PATH and re-run."
+fi
 
 # --- 3. Install graphify (optional, code-graph visual) ---
 if ! command -v graphify >/dev/null 2>&1; then
