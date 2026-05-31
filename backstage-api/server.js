@@ -4,6 +4,7 @@ import cors from 'cors';
 import { createSupabaseRouter } from './routes/supabase.js';
 import { createCodeGraphRouter } from './routes/codegraph.js';
 import { createFleetRouter } from './routes/fleet.js';
+import { createRegistryRouter } from './routes/registry.js';
 
 const app = express();
 app.use(cors());
@@ -11,12 +12,14 @@ app.use(express.json());
 
 // Fleet is optional (host fleet / osquery). Only mounted if FLEET_URL is set.
 const fleetEnabled = !!process.env.FLEET_URL;
-const serviceCount = 2 + (fleetEnabled ? 1 : 0);
+// Always-on services: supabase, codegraph, registry. Fleet adds one when enabled.
+const serviceCount = 3 + (fleetEnabled ? 1 : 0);
 
-app.get('/health', (_req, res) => res.json({ status: 'ok', services: serviceCount, fleet: fleetEnabled }));
+app.get('/health', (_req, res) => res.json({ status: 'ok', services: serviceCount, registry: true, fleet: fleetEnabled }));
 
 app.use('/supabase', createSupabaseRouter());
 app.use('/codegraph', createCodeGraphRouter());
+app.use('/registry', createRegistryRouter());
 if (fleetEnabled) app.use('/fleet', createFleetRouter());
 
 const PORT = parseInt(process.env.REGISTRY_PORT || '7008', 10);
