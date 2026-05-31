@@ -53,11 +53,19 @@ fi
 export PATH="$(npm config get prefix 2>/dev/null)/bin:$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"
 
 # --- 2. Copy the API server + scanner + classifier + orchestrator ---
+# Idempotent: remove any previous copy BEFORE copying so we always land the new
+# version. Without the rm, `cp -r` would nest the new dir inside the old one (or
+# leave stale files behind), breaking re-installs.
 info "Step 2/5 — Installing Registry files..."
-cp -r "$SRC_DIR/backstage-api" "$INSTALL_DIR/backstage-api"
-cp "$SRC_DIR/scanner.py"        "$INSTALL_DIR/scanner.py"
-cp "$SRC_DIR/classifier.py"     "$INSTALL_DIR/classifier.py"
-cp "$SRC_DIR/registry-build.sh" "$INSTALL_DIR/registry-build.sh"
+rm -rf "$INSTALL_DIR/backstage-api"
+cp -r "$SRC_DIR/backstage-api"  "$INSTALL_DIR/backstage-api"
+rm -f  "$INSTALL_DIR/scanner.py"
+cp     "$SRC_DIR/scanner.py"     "$INSTALL_DIR/scanner.py"
+rm -f  "$INSTALL_DIR/classifier.py"
+cp     "$SRC_DIR/classifier.py"  "$INSTALL_DIR/classifier.py"
+rm -f  "$INSTALL_DIR/registry-build.sh"
+cp     "$SRC_DIR/registry-build.sh" "$INSTALL_DIR/registry-build.sh"
+rm -rf "$INSTALL_DIR/scripts"
 [ -d "$SRC_DIR/scripts" ] && cp -r "$SRC_DIR/scripts" "$INSTALL_DIR/scripts" || true
 ( cd "$INSTALL_DIR/backstage-api" && npm install --omit=dev 2>&1 | tail -1 ) || fail "npm install (backstage-api) failed."
 ok "Registry files installed."

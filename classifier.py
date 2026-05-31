@@ -4,12 +4,30 @@ Registry Universal — Clasificador de Proyectos (L2)
 ====================================================
 
 Dado un repo/carpeta, detecta QUE TIPO de proyecto es (saas, api, bot,
-worker, scraper, web, cli, library, app, unknown) y extrae su estructura
-basica.
+worker, scraper, web, cli, library, app, docs, config, unknown), ademas de
+su DOMINIO (trading, fiscal, ai-agents, scraping, infra, general) y extrae
+su estructura basica.
 
 Capa L2 del Registry Universal de Sypnose: el L1 lista repos; el L2 los
 clasifica y perfila para que el resto del Registry (APIs, tablas, BD,
 frontend) sepa que esperar de cada uno.
+
+type vs domain son ORTOGONALES:
+  - type   = QUE ES el repo estructuralmente (api, saas, bot, library...).
+  - domain = DE QUE TRATA, independientemente de su forma (trading, fiscal,
+             ai-agents, scraping, infra, general).
+  Asi `stratos-rs` queda type:"api" + domain:"trading" (es una API que
+  ademas pertenece al mundo trading — lo mejor de ambos mundos).
+
+CERO unknowns: si un repo tiene CUALQUIER marcador (package.json,
+Cargo.toml, requirements.txt, go.mod, .git) o codigo, pero no encaja en
+ningun tipo especifico, se le asigna el tipo mas razonable por estructura:
+  - app    : tiene binario / entrypoint ejecutable (bin/, main, scripts dev).
+  - library: solo expone modulos/paquete sin entrypoint.
+  - docs   : mayoria de archivos son .md/.rst/.txt.
+  - config : mayoria de archivos son .yaml/.yml/.json/.toml/.ini.
+Solo queda "unknown" si NO hay NINGUN marcador NI codigo (carpeta vacia,
+o un anchor con solo .git).
 
 Diseno:
   - Python 3 stdlib unicamente (json, os, sys, re, pathlib, collections).
@@ -24,7 +42,7 @@ Diseno:
 
 API publica:
     classify_repo(path) -> dict con:
-        name, type, language, framework, stack[], file_count,
+        name, type, domain, language, framework, stack[], file_count,
         top_dirs[], endpoints_approx, markers_found[]
 
 CLI:
@@ -109,6 +127,62 @@ BOT_NAME_HINTS = (
 )
 SCRAPER_NAME_HINTS = ("scraper", "crawler", "etl", "spider", "scrape")
 WORKER_NAME_HINTS = ("worker", "dispatch", "dispatcher", "mirofish", "mithos", "claw")
+
+# ---------------------------------------------------------------------------
+# DOMINIO (ortogonal al type). Detecta DE QUE TRATA el repo, no su forma.
+# Cada dominio tiene pistas por (a) nombre del repo/crate y (b) dependencias.
+# Orden de evaluacion = especificidad: el primero que matchee gana, y
+# "general" es el fallback. Asi una api de trading queda type:api + domain:trading.
+# ---------------------------------------------------------------------------
+
+# trading / mercados financieros.
+TRADING_DOMAIN_NAME = (
+    "trading", "trader", "stratos", "rithmic", "nautilus", "exchange",
+    "backtest", "metatrader", "mt5", "ccxt", "eagleview", "iatrader",
+    "broker", "ctrader", "databento", "barter",
+)
+TRADING_DOMAIN_DEPS = (
+    "rithmic", "nautilus", "nautilus-trader", "ccxt", "metaapi",
+    "metaapi.cloud-sdk", "metatrader5", "metatrader", "barter", "binance",
+    "python-binance", "backtrader", "freqtrade", "ib_insync", "alpaca",
+    "alpaca-trade-api", "rust-decimal", "databento", "tokio-tungstenite",
+)
+
+# fiscal / contabilidad RD.
+FISCAL_DOMAIN_NAME = (
+    "dgii", "fiscal", "tax", "contador", "contabilidad", "factura",
+    "facturaia", "gestoria", "ncf", "tss", "impuesto",
+)
+FISCAL_DOMAIN_DEPS = ()  # el dominio fiscal se delata por nombre, no por deps.
+
+# ai-agents / orquestacion LLM.
+AI_AGENTS_DOMAIN_NAME = (
+    "claw", "mithos", "mirofish", "agent", "llm", "cerebro", "openclaw",
+    "dispatch", "dispatcher", "gemini", "anthropic", "cliproxy",
+)
+AI_AGENTS_DOMAIN_DEPS = (
+    "openai", "anthropic", "langchain", "llama-index", "llama_index",
+    "litellm", "@anthropic-ai/sdk", "@anthropic-ai", "ollama", "transformers",
+    "google-generativeai", "google-genai", "@google/generative-ai",
+    "vercel-ai", "ai",
+)
+
+# scraping / automation web (se solapa con el TYPE scraper, pero como dominio
+# aplica tambien a repos que no son "scraper puro" pero scrapean por dentro).
+SCRAPING_DOMAIN_NAME = ("scraper", "crawler", "spider", "scrape", "etl")
+SCRAPING_DOMAIN_DEPS = SCRAPER_DEPS  # reutiliza la lista de deps de scraping.
+
+# infra / devops / despliegue.
+INFRA_DOMAIN_NAME = (
+    "infra", "infrastructure", "devops", "deploy", "deployment", "ansible",
+    "terraform", "k8s", "kubernetes", "helm", "docker", "systemd",
+    "registry", "tunnel", "cloudflare", "nginx", "proxy", "gateway",
+    "monitoring", "observability",
+)
+INFRA_DOMAIN_DEPS = (
+    "ansible", "kubernetes", "pulumi", "docker", "@pulumi", "boto3",
+    "@aws-sdk", "google-cloud", "@google-cloud",
+)
 
 # --- Senales especificas de Rust (Cargo.toml) ------------------------------
 # Dependencias / palabras de crate que delatan un bot de trading o chat en Rust.
@@ -289,6 +363,11 @@ def _scan_tree(root: Path) -> dict:
       - rust_serve_hits: indicios de servidor escuchando en Rust
         (axum::serve, HttpServer::new, .bind(, Server::bind, .serve()
       - has_rust_main / has_rust_lib: existe algun main.rs / lib.rs
+      - code_file_count: nº de archivos cuyo ext es de un lenguaje de codigo
+        (los de EXT_LANG). Sirve para decidir docs/config vs codigo real.
+      - doc_file_count / config_file_count: nº de archivos .md/.rst/.txt y
+        .yaml/.yml/.json/.toml/.ini/.cfg/.conf respectivamente. Sirven para
+        el fallback docs/config cuando no hay tipo claro.
     """
     ext_counter: Counter = Counter()
     file_count = 0
@@ -301,6 +380,13 @@ def _scan_tree(root: Path) -> dict:
     rust_serve_hits = 0         # axum::serve / HttpServer::new / .bind( ...
     has_rust_main = False       # cualquier main.rs en el arbol
     has_rust_lib = False        # cualquier lib.rs en el arbol
+    code_file_count = 0         # archivos de lenguaje de codigo (EXT_LANG)
+    doc_file_count = 0          # .md / .rst / .txt / .adoc
+    config_file_count = 0       # .yaml / .yml / .json / .toml / .ini / ...
+
+    doc_exts = {".md", ".rst", ".txt", ".adoc", ".markdown"}
+    config_exts = {".yaml", ".yml", ".json", ".toml", ".ini", ".cfg",
+                   ".conf", ".env", ".properties", ".xml"}
 
     root_str = str(root)
 
@@ -328,6 +414,12 @@ def _scan_tree(root: Path) -> dict:
             ext = os.path.splitext(fname)[1].lower()
             if ext:
                 ext_counter[ext] += 1
+                if ext in EXT_LANG:
+                    code_file_count += 1
+                elif ext in doc_exts:
+                    doc_file_count += 1
+                elif ext in config_exts:
+                    config_file_count += 1
 
             low = fname.lower()
 
@@ -406,6 +498,9 @@ def _scan_tree(root: Path) -> dict:
         "rust_serve_hits": rust_serve_hits,
         "has_rust_main": has_rust_main,
         "has_rust_lib": has_rust_lib,
+        "code_file_count": code_file_count,
+        "doc_file_count": doc_file_count,
+        "config_file_count": config_file_count,
     }
 
 
@@ -433,6 +528,81 @@ def _any_dep(deps_lower: set, needles: tuple) -> list:
     return hits
 
 
+def _name_has(name_blob: str, needles: tuple) -> list:
+    """
+    Devuelve las needles presentes en el nombre del repo/crate como TOKEN
+    (no substring arbitrario): respeta limites de palabra con separadores
+    comunes (-, _, /, espacio, ., digitos). Asi 'stratos-rs' matchea
+    'stratos' pero 'taxonomy' NO matchea 'tax', y 'management' NO matchea
+    'agent'. Evita falsos positivos del dominio.
+    """
+    hits = []
+    for needle in needles:
+        if re.search(r"(?:^|[^a-z0-9])" + re.escape(needle) + r"(?:[^a-z0-9]|$)",
+                     name_blob):
+            hits.append(needle)
+    return hits
+
+
+# ---------------------------------------------------------------------------
+# Deteccion de DOMINIO (ortogonal al type)
+# ---------------------------------------------------------------------------
+
+def _detect_domain(name_blob: str, deps_lower: set, markers: list) -> str:
+    """
+    Detecta el DOMINIO del proyecto independientemente de su tipo estructural.
+
+    Devuelve uno de: "trading" | "fiscal" | "ai-agents" | "scraping" |
+    "infra" | "general".
+
+    Estrategia: para cada dominio reunimos sus hits por (nombre del repo/crate
+    como token) + (dependencias por substring). Gana el dominio con mas hits;
+    en empate manda el orden de especificidad (trading > fiscal > ai-agents >
+    scraping > infra). "general" solo si nadie matchea. Anota en `markers` por
+    que se eligio (trazabilidad, igual que markers_found del type).
+
+    name_blob ya viene en minusculas (nombre carpeta + nombre crate/pkg).
+    """
+    # (clave, hits_por_nombre, hits_por_dep). Orden = prioridad de desempate.
+    domains = [
+        ("trading",
+         _name_has(name_blob, TRADING_DOMAIN_NAME),
+         _any_dep(deps_lower, TRADING_DOMAIN_DEPS)),
+        ("fiscal",
+         _name_has(name_blob, FISCAL_DOMAIN_NAME),
+         _any_dep(deps_lower, FISCAL_DOMAIN_DEPS)),
+        ("ai-agents",
+         _name_has(name_blob, AI_AGENTS_DOMAIN_NAME),
+         _any_dep(deps_lower, AI_AGENTS_DOMAIN_DEPS)),
+        ("scraping",
+         _name_has(name_blob, SCRAPING_DOMAIN_NAME),
+         _any_dep(deps_lower, SCRAPING_DOMAIN_DEPS)),
+        ("infra",
+         _name_has(name_blob, INFRA_DOMAIN_NAME),
+         _any_dep(deps_lower, INFRA_DOMAIN_DEPS)),
+    ]
+
+    best_domain = "general"
+    best_score = 0
+    best_signals: tuple = ((), ())
+    for key, name_hits, dep_hits in domains:
+        score = len(name_hits) + len(dep_hits)
+        if score > best_score:            # '>' (no '>='): respeta prioridad
+            best_score = score
+            best_domain = key
+            best_signals = (name_hits, dep_hits)
+
+    if best_domain != "general":
+        name_hits, dep_hits = best_signals
+        bits = []
+        if name_hits:
+            bits.append("nombre~" + ",".join(name_hits))
+        if dep_hits:
+            bits.append("deps~" + ",".join(dep_hits))
+        markers.append(f"domain:{best_domain} ({'; '.join(bits)})")
+    return best_domain
+
+
 # ---------------------------------------------------------------------------
 # Clasificacion (motor de puntuacion)
 # ---------------------------------------------------------------------------
@@ -443,15 +613,17 @@ def classify_repo(path) -> dict:
 
     Returns dict:
         {
-          name, type, language, framework, stack[], file_count,
+          name, type, domain, language, framework, stack[], file_count,
           top_dirs[], endpoints_approx, markers_found[]
         }
+    type es la forma estructural; domain es el area tematica (ortogonal).
     """
     root = Path(path).expanduser().resolve()
 
     base = {
         "name": root.name or str(root),
         "type": "unknown",
+        "domain": "general",
         "language": "unknown",
         "framework": None,
         "stack": [],
@@ -566,7 +738,7 @@ def classify_repo(path) -> dict:
     markers: list = []
     scores: dict = {
         "saas": 0, "api": 0, "bot": 0, "worker": 0, "scraper": 0,
-        "web": 0, "cli": 0, "library": 0, "app": 0,
+        "web": 0, "cli": 0, "library": 0, "app": 0, "docs": 0, "config": 0,
     }
 
     # =======================================================================
@@ -766,9 +938,10 @@ def classify_repo(path) -> dict:
             markers.append("manifest sin app -> probable libreria")
 
     # --- Decision final -----------------------------------------------------
-    # Prioridad de desempate (mas especifico primero).
+    # Prioridad de desempate (mas especifico primero). docs/config van al
+    # final: solo ganan via el fallback, nunca por delante de un tipo real.
     priority = ["saas", "api", "bot", "worker", "scraper", "web", "cli",
-                "library", "app"]
+                "library", "app", "docs", "config"]
     best_type = "unknown"
     best_score = 0
     for t in priority:
@@ -776,32 +949,112 @@ def classify_repo(path) -> dict:
             best_score = scores[t]
             best_type = t
 
-    # Fallback "app": si nada hizo match claro pero hay un binario ejecutable
-    # (Cargo [[bin]]/main.rs, o main.go, o package.json con bin), es una
-    # aplicacion ejecutable, no "unknown". Mejor poco-especifico que nada.
+    # =======================================================================
+    # FALLBACK CERO-UNKNOWN: ningun tipo especifico hizo match.
+    #
+    # Si hay CUALQUIER marcador (manifest / .git) o codigo, NUNCA "unknown":
+    # elegimos el tipo estructural mas razonable. Regla de la tarea:
+    #   - app    : hay binario/entrypoint ejecutable (bin/main/[[bin]]/main.go
+    #              /cmd) O un package.json con scripts de arranque/build O un
+    #              dir top-level cli/bin/cmd con codigo.
+    #   - library: hay codigo pero solo expone modulos (sin entrypoint claro).
+    #   - docs   : la mayoria de archivos son .md/.rst/.txt.
+    #   - config : la mayoria de archivos son .yaml/.json/.toml/.ini/...
+    # Solo queda "unknown" si NO hay NINGUN marcador NI codigo (p. ej. una
+    # carpeta con unicamente .git, o vacia).
+    # =======================================================================
     if best_score == 0:
+        code_files = scan["code_file_count"]
+        doc_files = scan["doc_file_count"]
+        config_files = scan["config_file_count"]
+        has_git = (root / ".git").exists()
+
+        # ¿Arranca como aplicacion? bin/entrypoint o scripts npm de run/build.
+        run_scripts = {"start", "dev", "serve", "build", "build:npm",
+                       "dev:server", "dev:ui", "start:prod", "preview"}
+        pkg_scripts = pkg.get("scripts")
+        has_run_script = isinstance(pkg_scripts, dict) and bool(
+            run_scripts & set(pkg_scripts.keys())
+        )
+        has_cli_dir = bool({"cli", "bin", "cmd", "src/bin"} & top_set)
         has_executable = (
             has_bin
             or (gomod and (root / "main.go").exists())
             or (gomod and "cmd" in top_set)
             or bool(pkg.get("bin"))
         )
+
         if has_executable:
-            scores["app"] += 1
             best_type = "app"
+            scores["app"] += 1
             best_score = 1
             if cargo:
                 markers.append("Cargo con [[bin]]/main.rs sin tipo claro -> app")
             else:
                 markers.append("binario ejecutable sin tipo claro -> app")
-        else:
-            best_type = "unknown"
-            if not has_any_manifest:
-                markers.append("sin package.json/requirements/pyproject/Cargo/go.mod")
+        elif (has_run_script or has_cli_dir) and code_files > 0:
+            best_type = "app"
+            scores["app"] += 1
+            best_score = 1
+            why = "scripts de arranque/build" if has_run_script else \
+                  "dir cli/bin/cmd con codigo"
+            markers.append(f"app sin framework reconocido ({why}) -> app")
+        elif exposes_entry or py_lib_signal or rust_lib or go_lib:
+            best_type = "library"
+            scores["library"] += 1
+            best_score = 1
+            markers.append("manifest expone modulos/paquete sin app -> library")
+        elif code_files > 0:
+            # Hay codigo real pero ni entrypoint ni señales de libreria: por
+            # defecto es una libreria/coleccion de modulos antes que "unknown".
+            best_type = "library"
+            scores["library"] += 1
+            best_score = 1
+            markers.append(f"{code_files} archivos de codigo sin entrypoint -> library")
+        elif doc_files > 0 and doc_files >= config_files:
+            best_type = "docs"
+            scores["docs"] += 1
+            best_score = 1
+            markers.append(f"mayoria .md/.rst/.txt ({doc_files}) -> docs")
+        elif config_files > 0:
+            best_type = "config"
+            scores["config"] += 1
+            best_score = 1
+            markers.append(f"mayoria yaml/json/toml/ini ({config_files}) -> config")
+        elif has_any_manifest:
+            # Hay manifest pero ni codigo ni docs ni config (raro): library.
+            best_type = "library"
+            scores["library"] += 1
+            best_score = 1
+            markers.append("manifest presente sin codigo -> library")
+        elif has_git:
+            # .git ES un marcador (lo lista la tarea). Un repo solo-.git /
+            # vacio no tiene app, codigo, docs ni config: lo etiquetamos como
+            # 'library' (cascaron/placeholder) antes que 'unknown'. Asi se
+            # cumple "0 unknowns" cuando hay CUALQUIER marcador.
+            best_type = "library"
+            scores["library"] += 1
+            best_score = 1
+            if scan["file_count"] == 0:
+                markers.append("repo vacio (solo .git) -> library (placeholder/anchor)")
             else:
-                markers.append("manifest presente pero sin marcadores de tipo")
+                markers.append(".git sin codigo/manifest reconocible -> library")
+        else:
+            # NADA en absoluto: ni .git, ni manifest, ni codigo, ni docs, ni
+            # config. Unico unknown legitimo (carpeta suelta sin marcadores).
+            best_type = "unknown"
+            markers.append("sin .git ni manifest ni codigo -> unknown")
 
     base["type"] = best_type
+
+    # --- DOMINIO (ortogonal al type) ---------------------------------------
+    # Blob de nombre = carpeta + crate Cargo + nombre del package.json (si lo
+    # hay). Cubre casos como carpeta 'svc' con package.name significativo.
+    domain_blob = name_blob
+    pkg_name = str(pkg.get("name") or "").lower()
+    if pkg_name and pkg_name not in domain_blob:
+        domain_blob = domain_blob + " " + pkg_name
+    base["domain"] = _detect_domain(domain_blob, deps_lower, markers)
 
     # --- framework canonico (etiqueta legible) -----------------------------
     framework = None
@@ -949,10 +1202,12 @@ def _main(argv: list) -> int:
             f"Registry Universal L2 — Clasificador de Proyectos\n\n"
             f"Uso:\n"
             f"  python3 {prog} <ruta-repo> [--compact|--pretty]\n\n"
-            f"Salida: JSON con {{name, type, language, framework, stack, "
-            f"file_count, top_dirs, endpoints_approx, markers_found}}.\n"
+            f"Salida: JSON con {{name, type, domain, language, framework, "
+            f"stack, file_count, top_dirs, endpoints_approx, markers_found}}.\n"
             f"Tipos posibles: saas | api | bot | worker | scraper | web | "
-            f"cli | library | app | unknown\n"
+            f"cli | library | app | docs | config | unknown\n"
+            f"Dominios posibles: trading | fiscal | ai-agents | scraping | "
+            f"infra | general\n"
         )
         return 0 if ("--help" in flags or "-h" in flags) else 2
 
