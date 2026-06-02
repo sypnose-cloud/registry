@@ -281,10 +281,28 @@ elif command -v uv >/dev/null 2>&1; then
     mark_warn "graphify (instalacion fallo)"
   fi
 else
-  warn "graphify ausente y 'uv' no esta instalado. Es OPCIONAL: se omite."
-  printf '       Para habilitarlo: instala uv (https://docs.astral.sh/uv/) y reintenta,\n'
-  printf '       o instala uv con: curl -LsSf https://astral.sh/uv/install.sh | sh\n'
-  mark_warn "graphify (sin uv)"
+  warn "graphify ausente y 'uv' no esta instalado. Instalando uv (knowledge-graph es parte del Registry)..."
+  if curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1; then
+    export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"; hash -r 2>/dev/null || true
+    if command -v uv >/dev/null 2>&1; then
+      ok "uv instalado ($(uv --version 2>&1 | awk '{print $2}'))"
+      if uv tool install graphifyy >/dev/null 2>&1; then
+        export PATH="$HOME/.local/bin:$PATH"; hash -r 2>/dev/null || true
+        if command -v graphify >/dev/null 2>&1; then
+          ok "graphify instalado ($(command -v graphify))"; mark_ok "graphify"
+        else
+          warn "graphifyy instalado pero 'graphify' no en PATH (anade ~/.local/bin)."; mark_warn "graphify (no en PATH)"
+        fi
+      else
+        warn "uv tool install graphifyy fallo. Reintenta: uv tool install graphifyy"; mark_warn "graphify (instalacion fallo)"
+      fi
+    else
+      warn "uv se instalo pero no esta en PATH. Abre shell nueva y: uv tool install graphifyy"; mark_warn "graphify (uv sin PATH)"
+    fi
+  else
+    warn "No se pudo instalar uv (sin red?). Manual: curl -LsSf https://astral.sh/uv/install.sh | sh && uv tool install graphifyy"
+    mark_warn "graphify (uv install fallo)"
+  fi
 fi
 
 # =============================================================================
@@ -328,6 +346,28 @@ if command -v sqlite3 >/dev/null 2>&1; then
   ok "CLI sqlite3 disponible ($(sqlite3 --version 2>/dev/null | awk '{print $1}'))"
 else
   warn "CLI 'sqlite3' no instalada (OPCIONAL). Para tenerla: apt-get install -y sqlite3"
+fi
+
+# =============================================================================
+# 8. jq  (PRERREQUISITO runtime de registry-build.sh: hace 'need jq' y muere sin el)
+# =============================================================================
+hdr "8/8  jq (prerequisito del orquestador)"
+if command -v jq >/dev/null 2>&1; then
+  ok "jq presente ($(jq --version 2>&1))"
+  mark_ok "jq"
+else
+  warn "jq ausente — registry-build.sh lo requiere. Intentando instalar..."
+  if command -v apt-get >/dev/null 2>&1; then sudo apt-get install -y jq >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then sudo dnf install -y jq >/dev/null 2>&1 || true
+  elif command -v yum >/dev/null 2>&1; then sudo yum install -y jq >/dev/null 2>&1 || true
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    ok "jq instalado ($(jq --version 2>&1))"; mark_ok "jq"
+  else
+    fail "jq NO se pudo instalar. Es PRERREQUISITO del orquestador (registry-build.sh)."
+    printf '       Instalalo: sudo apt-get install -y jq   |   sudo dnf install -y jq\n'
+    mark_miss "jq (prerequisito)"
+  fi
 fi
 
 # =============================================================================

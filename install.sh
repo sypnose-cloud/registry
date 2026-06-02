@@ -100,8 +100,15 @@ cat > "$UNIT_DIR/registry-refresh.service" <<EOF
 Description=Sypnose Registry refresh (re-scan + re-classify the server)
 [Service]
 Type=oneshot
+# PATH must include trace-mcp + graphify bins, else the timer context can't
+# resolve them and the code-graph/knowledge-graph steps silently skip (RUN_TRACE=0).
+# The login shell has these on PATH, but a --user timer does NOT inherit it.
+Environment=PATH=$HOME/.trace-mcp/bin:$HOME/.npm-global/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=REGISTRY_DATA=$DATA_DIR
 Environment=ROOTS=$ROOTS
+# Cap memory so a heavy trace-mcp index can't OOM the box (seen on 217).
+MemoryMax=1500M
+OOMScoreAdjust=400
 ExecStart=/usr/bin/env bash $INSTALL_DIR/registry-build.sh
 EOF
 
@@ -125,11 +132,26 @@ else
   warn "systemctl not available — start manually: cd $INSTALL_DIR/backstage-api && REGISTRY_PORT=$PORT node server.js"
 fi
 
-# --- 5. Verify ---
+# --- 5. Verify (retry loop + real data, not just /health) ---
 info "Step 5/5 — Verifying..."
-sleep 3
-CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 6 "http://localhost:$PORT/health" 2>/dev/null || echo 000)
+CODE=000
+for i in $(seq 1 15); do
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 6 "http://localhost:$PORT/health" 2>/dev/null || echo 000)
+  [ "$CODE" = "200" ] && break
+  sleep 2
+done
 if [ "$CODE" = "200" ]; then ok "Registry API live: http://localhost:$PORT/health"; else warn "API not up yet (HTTP $CODE) — check: systemctl --user status registry-api"; fi
+
+# Did the data actually get fed? (path fix + trace-mcp + graphify)
+if [ -f "$DATA_DIR/build-summary.json" ] && command -v jq >/dev/null 2>&1; then
+  TRACE_OK=$(jq -r '.trace_mcp.ok // 0' "$DATA_DIR/build-summary.json" 2>/dev/null || echo 0)
+  GRAPH_OK=$(jq -r '.graphify.ok // 0' "$DATA_DIR/build-summary.json" 2>/dev/null || echo 0)
+  REPOS=$(jq -r '.repos.found // 0' "$DATA_DIR/build-summary.json" 2>/dev/null || echo 0)
+  PATHS_OK=$(jq -e 'all(.[]; .path!=null)' "$DATA_DIR/projects.json" >/dev/null 2>&1 && echo yes || echo no)
+  info "Data check -> repos:$REPOS  paths_present:$PATHS_OK  trace_mcp.ok:$TRACE_OK  graphify.ok:$GRAPH_OK"
+  [ "$PATHS_OK" = "yes" ] && ok "projects.json has paths (code-graph will feed)." || warn "projects.json missing paths — trace-mcp won't run (classifier path bug)."
+  [ "$TRACE_OK" -ge 1 ] 2>/dev/null && ok "trace-mcp code graph fed ($TRACE_OK repos indexed)." || warn "trace-mcp fed 0 repos — check PATH in registry-refresh.service."
+fi
 
 echo ""
 echo "=== Sypnose Registry installed ==="

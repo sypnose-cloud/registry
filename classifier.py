@@ -622,6 +622,7 @@ def classify_repo(path) -> dict:
 
     base = {
         "name": root.name or str(root),
+        "path": str(root),
         "type": "unknown",
         "domain": "general",
         "language": "unknown",

@@ -281,24 +281,34 @@ def scan_repos(roots, max_depth):
             git_path = os.path.join(dirpath, ".git")
             is_repo = os.path.isdir(git_path) or os.path.isfile(git_path)
             if is_repo:
-                real = os.path.realpath(dirpath)
-                if real not in seen_paths:
-                    seen_paths.add(real)
-                    repos.append({
-                        "path": dirpath,
-                        "name": os.path.basename(dirpath.rstrip(os.sep)) or dirpath,
-                        "has_git": True,
-                    })
-                # Si este repo CONTIENE sub-repos (carpetas hijas con .git), seguimos
-                # descendiendo para capturarlos (caso monorepo / carpeta-contenedor de
-                # repos, p.ej. /home/user que es repo y aloja 15 proyectos). Si NO hay
-                # sub-repos, dejamos de descender (no entrar en src/, lib/, etc.).
+                # ¿Este dir contiene sub-repos (carpetas hijas con .git)? Caso
+                # monorepo / carpeta-contenedor de repos (p.ej. /home/user que es repo
+                # git de dotfiles y aloja 15 proyectos).
                 has_subrepos = False
                 for d in dirnames:
                     sub = os.path.join(dirpath, d)
                     if os.path.isdir(os.path.join(sub, ".git")) or os.path.isfile(os.path.join(sub, ".git")):
                         has_subrepos = True
                         break
+                # Un home de usuario (/home/X) o root (/root) que SOLO es repo por
+                # tener dotfiles versionados NO es un proyecto: indexarlo entero
+                # (cientos de miles de ficheros) revienta trace-mcp/graphify. Si es un
+                # home Y contiene sub-repos, lo tratamos como contenedor: NO se agrega,
+                # solo se desciende a sus hijos.
+                parent = os.path.dirname(dirpath.rstrip(os.sep))
+                is_home_like = parent in ("/home", "/Users") or dirpath.rstrip(os.sep) == "/root"
+                skip_self = is_home_like and has_subrepos
+                if not skip_self:
+                    real = os.path.realpath(dirpath)
+                    if real not in seen_paths:
+                        seen_paths.add(real)
+                        repos.append({
+                            "path": dirpath,
+                            "name": os.path.basename(dirpath.rstrip(os.sep)) or dirpath,
+                            "has_git": True,
+                        })
+                # Si contiene sub-repos, seguimos descendiendo para capturarlos.
+                # Si NO, dejamos de descender (no entrar en src/, lib/, etc.).
                 if not has_subrepos:
                     dirnames[:] = []
 
