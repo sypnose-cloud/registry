@@ -225,13 +225,17 @@ if ensure_npm_global "trace-mcp" "trace-mcp"; then
         if node -e "require('$TRACE_DIR/node_modules/better-sqlite3')" >/dev/null 2>&1; then
           ok "better-sqlite3 recompilado y cargando correctamente"
         else
-          warn "rebuild ejecutado pero los bindings aun no cargan."
-          warn "Comprueba toolchain de compilacion: gcc/g++/make + python3 (node-gyp)."
+          fail "rebuild ejecutado pero los bindings aun no cargan — toolchain incompleto."
+          fail "Asegurate de tener: gcc, g++, make, python3 (node-gyp los necesita todos)."
+          fail "Instala: sudo apt-get install -y build-essential python3-dev"
+          mark_miss "build-essential/toolchain (better-sqlite3 no carga tras rebuild)"
         fi
       else
-        warn "npm rebuild better-sqlite3 fallo. Probablemente falta toolchain."
-        warn "Instala: build-essential (apt) o 'Development Tools' (dnf) + python3, y reintenta:"
-        printf '         (cd %s && npm rebuild better-sqlite3)\n' "$TRACE_DIR"
+        fail "npm rebuild better-sqlite3 fallo — falta toolchain de compilacion (build-essential / gcc / python3-dev)."
+        printf '       Instala: sudo apt-get install -y build-essential python3-dev\n'
+        printf '       O en RHEL/Fedora: sudo dnf groupinstall -y '"'"'Development Tools'"'"' && sudo dnf install -y python3-devel\n'
+        printf '       Luego reintenta: (cd %s && npm rebuild better-sqlite3)\n' "$TRACE_DIR"
+        mark_miss "build-essential/toolchain (requerido por better-sqlite3 en trace-mcp)"
       fi
     fi
   else

@@ -5,17 +5,43 @@ import { Router } from 'express';
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 const RPC_URL = process.env.SUPABASE_RPC_URL || 'http://localhost:8100/rest/v1/rpc/execute_sql';
 
+// Timeout for Supabase fetch requests (ms). Keeps ECONNREFUSED from hanging as a
+// raw HTTP 500 when Supabase is not running — same lazy/graceful pattern as fleet.js.
+const FETCH_TIMEOUT_MS = 3000;
+
 async function execSql(query) {
-  const res = await fetch(RPC_URL, {
-    method: 'POST',
-    headers: {
-      'apikey': SERVICE_KEY,
-      'Authorization': `Bearer ${SERVICE_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ query }),
-  });
-  return res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(RPC_URL, {
+      method: 'POST',
+      headers: {
+        'apikey': SERVICE_KEY,
+        'Authorization': `Bearer ${SERVICE_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ query }),
+      signal: controller.signal,
+    });
+    return res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Returns true when the connection error is "Supabase not reachable" rather than a
+// real query error — covers ECONNREFUSED, ENOTFOUND, abort (timeout), and fetch
+// failures to localhost:8100.
+function isConnectionError(err) {
+  if (!err) return false;
+  const msg = err.message || '';
+  return (
+    err.name === 'AbortError' ||
+    msg.includes('ECONNREFUSED') ||
+    msg.includes('ENOTFOUND') ||
+    msg.includes('fetch failed') ||
+    msg.includes('connect ECONNREFUSED')
+  );
 }
 
 export function createSupabaseRouter() {
@@ -40,6 +66,9 @@ export function createSupabaseRouter() {
       `);
       res.json({ count: tables.length, tables });
     } catch (e) {
+      if (isConnectionError(e)) {
+        return res.status(503).json({ available: false, reason: 'Supabase not detected on :8100', detail: e.message });
+      }
       res.status(500).json({ error: e.message });
     }
   });
@@ -57,6 +86,9 @@ export function createSupabaseRouter() {
       `);
       res.json({ table: name, count: columns.length, columns });
     } catch (e) {
+      if (isConnectionError(e)) {
+        return res.status(503).json({ available: false, reason: 'Supabase not detected on :8100', detail: e.message });
+      }
       res.status(500).json({ error: e.message });
     }
   });
@@ -78,6 +110,9 @@ export function createSupabaseRouter() {
       `);
       res.json({ count: fks.length, fks });
     } catch (e) {
+      if (isConnectionError(e)) {
+        return res.status(503).json({ available: false, reason: 'Supabase not detected on :8100', detail: e.message });
+      }
       res.status(500).json({ error: e.message });
     }
   });
@@ -96,6 +131,9 @@ export function createSupabaseRouter() {
         schemas: rows,
       });
     } catch (e) {
+      if (isConnectionError(e)) {
+        return res.status(503).json({ available: false, reason: 'Supabase not detected on :8100', detail: e.message });
+      }
       res.status(500).json({ error: e.message });
     }
   });

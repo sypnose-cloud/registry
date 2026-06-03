@@ -5,31 +5,41 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 function findLatestDb() {
-  if (process.env.CODEGRAPH_DB) return process.env.CODEGRAPH_DB;
-  const indexDir = join(homedir(), '.trace-mcp', 'index');
-  const dbs = readdirSync(indexDir).filter(f => f.endsWith('.db'));
-  if (dbs.length === 0) throw new Error(`No .db files in ${indexDir}`);
-  dbs.sort((a, b) => statSync(join(indexDir, b)).mtimeMs - statSync(join(indexDir, a)).mtimeMs);
-  return join(indexDir, dbs[0]);
+  try {
+    if (process.env.CODEGRAPH_DB) return process.env.CODEGRAPH_DB;
+    const indexDir = join(homedir(), '.trace-mcp', 'index');
+    const dbs = readdirSync(indexDir).filter(f => f.endsWith('.db'));
+    if (dbs.length === 0) return null;
+    dbs.sort((a, b) => statSync(join(indexDir, b)).mtimeMs - statSync(join(indexDir, a)).mtimeMs);
+    return join(indexDir, dbs[0]);
+  } catch {
+    return null;
+  }
 }
 
-const DB_PATH = findLatestDb();
-
 function getDb() {
-  return new Database(DB_PATH, { readonly: true });
+  const dbPath = findLatestDb();
+  if (!dbPath) return null;
+  return new Database(dbPath, { readonly: true });
+}
+
+function notAvailable(_req, res) {
+  res.status(503).json({ available: false, reason: 'trace-mcp index not found - run registry-build.sh first' });
 }
 
 export function createCodeGraphRouter() {
   const router = Router();
 
   router.get('/', (_req, res) => {
-    res.json({ endpoints: ['/routes', '/routes-with-tables', '/route/:path', '/summary'] });
+    const available = findLatestDb() !== null;
+    res.json({ available, endpoints: ['/routes', '/routes-with-tables', '/route/:path', '/summary'] });
   });
 
   // GET /codegraph/routes — all route handlers (next_entry_point edges)
   router.get('/routes', async (_req, res) => {
+    const db = getDb();
+    if (!db) return notAvailable(_req, res);
     try {
-      const db = getDb();
       const routes = db.prepare(`
         SELECT f.path, s.name, s.kind,
                json_extract(e.metadata, '$.method') as http_method
@@ -50,8 +60,9 @@ export function createCodeGraphRouter() {
 
   // GET /codegraph/routes-with-tables — routes that directly call .from('table')
   router.get('/routes-with-tables', async (_req, res) => {
+    const db = getDb();
+    if (!db) return notAvailable(_req, res);
     try {
-      const db = getDb();
       const chains = db.prepare(`
         SELECT f.path as route_path, s.name as handler_name,
                json_extract(sq.metadata, '$.op') as db_op,
@@ -77,8 +88,9 @@ export function createCodeGraphRouter() {
   // GET /codegraph/route/:path — calls chain for a specific route file
   // Usage: /codegraph/route/app%2Fapi%2Fclientes%2Froute.ts (URL-encoded path)
   router.get('/route/:path(*)', async (req, res) => {
+    const db = getDb();
+    if (!db) return notAvailable(req, res);
     try {
-      const db = getDb();
       const routePath = req.params.path;
 
       // Get the route handler
@@ -133,8 +145,9 @@ export function createCodeGraphRouter() {
 
   // GET /codegraph/summary — overall stats
   router.get('/summary', async (_req, res) => {
+    const db = getDb();
+    if (!db) return notAvailable(_req, res);
     try {
-      const db = getDb();
       const stats = {};
       stats.total_files = db.prepare('SELECT count(*) as cnt FROM files').get().cnt;
       stats.total_symbols = db.prepare('SELECT count(*) as cnt FROM symbols').get().cnt;
