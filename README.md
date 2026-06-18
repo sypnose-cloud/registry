@@ -1,101 +1,121 @@
 # Sypnose Registry
 
-A **live, self-updating registry** of your codebase: every API route, every database table,
-which API touches which table, which frontend page calls which endpoint — served over HTTP,
-refreshed automatically every 15 minutes. For humans and AI agents.
+Map **every project, every file, every function, and every connection** on your server. One command.
 
-Point it at any repo. One command. No manual catalog files.
+Click on a project, see its files. Inside each file, see its functions. Those functions connect to other projects, workers connect to dispatchers, dispatchers connect to LLM APIs — the **entire chain**, mapped live.
 
 ---
 
-## Install — one command
+## Install
 
-**Linux / Mac:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sypnose-cloud/registry/main/install.sh | bash -s -- --repo /path/to/your/repo
+curl -fsSL https://registry.sypnose.cloud/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-```powershell
-irm https://raw.githubusercontent.com/sypnose-cloud/registry/main/install.ps1 | iex
-# then it prompts for your repo path
-```
+That's it. The installer:
+1. Installs Node.js 20+ if missing
+2. Auto-discovers every project on your server (package.json, Cargo.toml, pyproject.toml, go.mod, .git)
+3. Indexes all code into per-project SQLite databases
+4. Detects cross-project connections and external service dependencies
+5. Starts an API server + dashboard on port 7009
+6. Sets up auto-refresh every 15 minutes via systemd
 
-`--repo` is the codebase you want indexed. The registry installs trace-mcp (code-graph indexer),
-optionally graphify, copies the API server, indexes your repo, and starts a service on `:7008`
-plus a 15-minute refresh timer.
+Works on Ubuntu 20+/22+/24+, Debian 11+. Idempotent — safe to run multiple times.
 
 ---
 
 ## What you get
 
-| Endpoint | What it returns |
-|----------|-----------------|
-| `GET /health` | status + service count |
-| `GET /codegraph/summary` | files, symbols, edges, relation types |
-| `GET /codegraph/routes` | all API route handlers detected |
-| `GET /codegraph/routes-with-tables` | which API route touches which DB table |
-| `GET /supabase/summary` | DB tables, foreign keys (if Supabase/Postgres configured) |
-| `GET /fleet/*` | host/container inventory (only if `FLEET_URL` is set) |
+### Dashboard (port 7009)
 
-Plus a `frontend-api-map.json` mapping each page to the API endpoints it calls.
+5-tab HTML dashboard, zero dependencies, dark devops theme:
+
+| Tab | What it shows |
+|-----|--------------|
+| **Projects** | Card grid — every project with file/symbol/edge/route counts |
+| **Services** | Table view — systemd services, ports, Docker containers |
+| **CodeGraph** | 3-pane browser — files, symbols, relationships |
+| **Topology Map** | SVG Sankey diagram — projects connected by Bezier curves, external services on the right |
+| **Gaps** | What's missing — unindexed dirs, disconnected services |
+
+### API
+
+All data available as JSON:
+
+```bash
+# List all indexed projects
+curl http://localhost:7009/multi/projects
+
+# Cross-project topology (who calls who)
+curl http://localhost:7009/multi/topology
+
+# Search any symbol across all projects
+curl http://localhost:7009/multi/search?q=dispatch
+
+# Deep drill-down: files → functions → calls → externals
+curl http://localhost:7009/multi/deep/my-project
+
+# File-level: every function in a file + what it calls
+curl http://localhost:7009/multi/deep/my-project/src/main.rs
+```
+
+### Auto-refresh
+
+A systemd timer re-scans every 15 minutes. New files, new functions, new connections appear automatically.
+
+```bash
+# Check timer status
+systemctl --user list-timers registry-refresh.timer
+
+# Force a re-scan now
+systemctl --user start registry-refresh.service
+
+# View API logs
+journalctl --user -u registry-api -f
+```
 
 ---
 
 ## How it works
 
 ```
-[15-min timer]
-   -> trace-mcp index <repo>      (rebuilds the code graph -> SQLite)
-   -> graphify update <repo>      (refreshes the visual graph)
-   -> build-frontend-api-map.mjs  (maps page -> endpoints)
-[registry-api :7008]  reads that graph (read-only) and serves it over HTTP — always live.
+Your Server
+  │
+  ├── Project A (Node.js)     ─┐
+  ├── Project B (Python)       ├── trace-mcp indexes each ──► SQLite DBs
+  ├── Project C (Rust)         │                               │
+  └── Project D (Go)          ─┘                               │
+                                                               ▼
+                                                    topology-builder detects
+                                                    cross-project edges
+                                                               │
+                                                               ▼
+                                                    backstage-api serves
+                                                    dashboard + JSON API
 ```
 
-It is **self-updating**: edit your code, and within 15 minutes the registry reflects it.
-No manual YAML, no manual catalog.
+**trace-mcp** (the code intelligence engine) parses each project and extracts:
+- Files and their languages
+- Symbols (functions, classes, methods, variables, constants)
+- Edges (calls, imports, references, route definitions, DB queries)
+- Routes (API endpoints with handlers)
+- Environment variables
+
+**topology-builder** then detects:
+- Cross-project symbol references (Project A calls a function defined in Project B)
+- External service dependencies (from env vars matching known patterns: OpenAI, Cloudflare, Supabase, etc.)
 
 ---
 
-## Configuration (all optional, env vars)
+## Configuration
 
-| Var | Default | Meaning |
-|-----|---------|---------|
-| `REGISTRY_REPO` | (required) | Repo to index |
-| `REGISTRY_PORT` | `7008` | HTTP port |
-| `REGISTRY_BIND` | `0.0.0.0` | Bind address |
-| `FLEET_URL` | (unset) | Enable host-fleet inventory (osquery/Fleet). Off by default. |
-
-No secrets in this repo. Anything sensitive (Fleet creds, DB URL) is supplied via env at install time.
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `REGISTRY_PORT` | `7009` | Port for the API + dashboard |
+| `REGISTRY_DATA` | `~/.registry-data` | Where scan results and topology are stored |
 
 ---
 
-## Requirements
+## License
 
-- Node.js 18+, npm, git
-- (optional) `uv` for graphify
-- A repo to index
-
----
-
-## Uninstall
-
-```bash
-systemctl --user disable --now registry-api.service registry-refresh.timer
-rm -rf ~/.registry ~/.config/systemd/user/registry-*.{service,timer}
-systemctl --user daemon-reload
-```
-
----
-
-## Limitations (honest)
-
-- **API -> DB** mapping captures direct `.from('table')` calls in the handler. Routes that
-  query through helper functions may need the optional `build-api-bd-helpers-map.mjs` pass.
-- **Fleet** integration is off unless you set `FLEET_URL` to a running Fleet/osquery server.
-- Designed for Next.js / Supabase stacks first; the code-graph (trace-mcp) supports more, but
-  the `routes-with-tables` mapping is tuned for that stack.
-
----
-
-MIT. Not affiliated with Anthropic. Built as part of [Sypnose](https://github.com/sypnose-cloud).
+MIT. (c) 2026 Sypnose Cloud.
