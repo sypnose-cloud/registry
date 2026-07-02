@@ -10,7 +10,6 @@ export function useKeyboard() {
     setSearchOpen,
     isFilterOpen,
     setFilterOpen,
-    toggleLayoutPause,
     navigateHistoryBack,
     navigateHistoryForward,
     selectedNodeId,
@@ -48,13 +47,6 @@ export function useKeyboard() {
       // Skip remaining shortcuts when typing in an input
       if (isInput) return;
 
-      // Space — toggle layout pause
-      if (e.key === ' ') {
-        e.preventDefault();
-        toggleLayoutPause();
-        return;
-      }
-
       // F — toggle filter bar
       if (e.key === 'f' || e.key === 'F') {
         toggleFilter();
@@ -84,7 +76,6 @@ export function useKeyboard() {
     setSearchOpen,
     isFilterOpen,
     setFilterOpen,
-    toggleLayoutPause,
     navigateHistoryBack,
     navigateHistoryForward,
     selectedNodeId,

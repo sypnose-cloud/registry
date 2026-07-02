@@ -49,9 +49,9 @@ fn save_config(config: &AppConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_folder_dialog() -> Result<Option<String>, String> {
-    let folder = rfd::FileDialog::new().pick_folder();
-    Ok(folder.map(|p| p.to_string_lossy().to_string()))
+async fn open_folder_dialog() -> Result<Option<String>, String> {
+    let folder = rfd::AsyncFileDialog::new().pick_folder().await;
+    Ok(folder.map(|p| p.path().to_string_lossy().to_string()))
 }
 
 #[tauri::command]

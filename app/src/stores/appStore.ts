@@ -46,10 +46,6 @@ interface AppState {
   stats: GraphStats;
   setStats: (stats: Partial<GraphStats>) => void;
 
-  // Layout
-  isLayoutPaused: boolean;
-  toggleLayoutPause: () => void;
-
   // Selection history (for [ ] navigation)
   selectionHistory: SelectionHistoryEntry[];
   historyIndex: number;
@@ -147,10 +143,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Graph stats
   stats: { nodeCount: 0, edgeCount: 0, communityCount: 0, zoom: 1 },
   setStats: (partial) => set((s) => ({ stats: { ...s.stats, ...partial } })),
-
-  // Layout
-  isLayoutPaused: false,
-  toggleLayoutPause: () => set((s) => ({ isLayoutPaused: !s.isLayoutPaused })),
 
   // Selection history
   selectionHistory: [],
