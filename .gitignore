@@ -4,3 +4,5 @@ node_modules/
 .registry-data/
 *.bak
 *.log
+
+graphify-out/
