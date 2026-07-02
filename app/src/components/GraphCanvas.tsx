@@ -6,6 +6,7 @@ import { EdgeCurvedArrowProgram } from '@sigma/edge-curve';
 import { createNodeBorderProgram } from '@sigma/node-border';
 import { useAppStore } from '../stores/appStore';
 import { buildGraphologyGraph, useGraphStats } from '../hooks/useGraph';
+import type { PositionCache } from '../hooks/useGraph';
 import type { UnifiedGraph } from '../types/graph';
 
 const NodeBorderProgram = createNodeBorderProgram({
@@ -25,11 +26,13 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
   const sigmaRef = useRef<Sigma | null>(null);
   const hoveredRef = useRef<string | null>(null);
   const selectedRef = useRef<string | null>(null);
+  // Persistent position cache — survives filter toggles and prevents node jumping
+  const positionCacheRef = useRef<PositionCache>(new Map());
+
   const {
     isFilterOpen,
     selectedNodeId,
     setSelectedNode,
-    setHoveredNode,
     setStats,
     focusNodeId,
     setFocusNode,
@@ -41,6 +44,7 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
 
   useGraphStats();
 
+  // Sigma instance lifecycle — only creates/destroys the renderer, never rebuilds graph data
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -113,13 +117,11 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
     });
     sigma.on('enterNode', ({ node }) => {
       hoveredRef.current = node;
-      setHoveredNode(node);
       if (containerRef.current) containerRef.current.style.cursor = 'pointer';
       sigma.refresh();
     });
     sigma.on('leaveNode', () => {
       hoveredRef.current = null;
-      setHoveredNode(null);
       if (containerRef.current) containerRef.current.style.cursor = 'default';
       sigma.refresh();
     });
@@ -137,67 +139,63 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
     };
   }, []);
 
+  // SINGLE graph build effect — replaces the two separate effects that caused double construction.
+  // Runs whenever data OR filters change. Uses positionCacheRef so nodes keep their positions
+  // across filter toggles (no more jumping on re-filter).
   useEffect(() => {
     if (!data || !sigmaRef.current) return;
 
     try {
-      const g = buildGraphologyGraph(data);
-      sigmaRef.current.setGraph(g);
-      sigmaRef.current.refresh();
+      const hasTypeFilter = activeTypeFilters.size > 0;
+      const hasCommunityFilter = activeCommunityFilters.size > 0;
+      const hasLanguageFilter = activeLanguageFilters.size > 0;
 
-      setTimeout(() => {
-        sigmaRef.current?.getCamera().animatedReset({ duration: 600 });
-      }, 100);
+      // Build the full graph once (with position cache)
+      const { graph: full, updatedCache } = buildGraphologyGraph(data, positionCacheRef.current);
+      positionCacheRef.current = updatedCache;
+
+      if (!hasTypeFilter && !hasCommunityFilter && !hasLanguageFilter) {
+        // No filters — use the full graph as-is
+        sigmaRef.current.setGraph(full);
+        sigmaRef.current.refresh();
+        setTimeout(() => {
+          sigmaRef.current?.getCamera().animatedReset({ duration: 600 });
+        }, 100);
+        return;
+      }
+
+      // Filters active — slice the full graph (nodes keep their cached positions)
+      const filtered = new Graph({ multi: false, type: 'directed' });
+
+      const visibleNodes = new Set<string>();
+      full.forEachNode((nodeId, attrs) => {
+        const typeOk = !hasTypeFilter || activeTypeFilters.has(attrs.nodeType as string);
+        const communityOk = !hasCommunityFilter || activeCommunityFilters.has(attrs.community as number);
+        const languageOk = !hasLanguageFilter || activeLanguageFilters.has(attrs.language as string);
+        if (typeOk && communityOk && languageOk) {
+          visibleNodes.add(nodeId);
+        }
+      });
+
+      full.forEachNode((nodeId, attrs) => {
+        if (visibleNodes.has(nodeId)) {
+          filtered.addNode(nodeId, attrs);
+        }
+      });
+
+      full.forEachEdge((_edgeId, attrs, source, target) => {
+        if (visibleNodes.has(source) && visibleNodes.has(target)) {
+          if (!filtered.hasEdge(source, target)) {
+            filtered.addEdge(source, target, attrs);
+          }
+        }
+      });
+
+      sigmaRef.current.setGraph(filtered);
+      sigmaRef.current.refresh();
     } catch (err) {
       console.error('[GraphCanvas] ERROR building/setting graph:', err);
     }
-  }, [data]);
-
-  useEffect(() => {
-    if (!data || !sigmaRef.current) return;
-
-    const hasTypeFilter = activeTypeFilters.size > 0;
-    const hasCommunityFilter = activeCommunityFilters.size > 0;
-    const hasLanguageFilter = activeLanguageFilters.size > 0;
-
-    if (!hasTypeFilter && !hasCommunityFilter && !hasLanguageFilter) {
-      if (data) {
-        const full = buildGraphologyGraph(data);
-        sigmaRef.current.setGraph(full);
-        sigmaRef.current.refresh();
-      }
-      return;
-    }
-
-    const full = buildGraphologyGraph(data);
-    const filtered = new Graph({ multi: false, type: 'directed' });
-
-    const visibleNodes = new Set<string>();
-    full.forEachNode((nodeId, attrs) => {
-      const typeOk = !hasTypeFilter || activeTypeFilters.has(attrs.nodeType as string);
-      const communityOk = !hasCommunityFilter || activeCommunityFilters.has(attrs.community as number);
-      const languageOk = !hasLanguageFilter || activeLanguageFilters.has(attrs.language as string);
-      if (typeOk && communityOk && languageOk) {
-        visibleNodes.add(nodeId);
-      }
-    });
-
-    full.forEachNode((nodeId, attrs) => {
-      if (visibleNodes.has(nodeId)) {
-        filtered.addNode(nodeId, attrs);
-      }
-    });
-
-    full.forEachEdge((_edgeId, attrs, source, target) => {
-      if (visibleNodes.has(source) && visibleNodes.has(target)) {
-        if (!filtered.hasEdge(source, target)) {
-          filtered.addEdge(source, target, attrs);
-        }
-      }
-    });
-
-    sigmaRef.current.setGraph(filtered);
-    sigmaRef.current.refresh();
   }, [data, activeTypeFilters, activeCommunityFilters, activeLanguageFilters]);
 
   useEffect(() => {

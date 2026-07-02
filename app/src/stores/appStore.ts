@@ -16,10 +16,6 @@ interface AppState {
   selectedNode: GraphNode | null;
   setSelectedNode: (nodeId: string | null) => void;
 
-  // Hovered node
-  hoveredNodeId: string | null;
-  setHoveredNode: (nodeId: string | null) => void;
-
   // UI panels
   isSearchOpen: boolean;
   setSearchOpen: (open: boolean) => void;
@@ -88,10 +84,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ selectedNodeId: null, selectedNode: null });
     }
   },
-
-  // Hovered node
-  hoveredNodeId: null,
-  setHoveredNode: (nodeId) => set({ hoveredNodeId: nodeId }),
 
   // UI panels
   isSearchOpen: false,

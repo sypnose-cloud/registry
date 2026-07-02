@@ -1,29 +1,9 @@
 import React, { useMemo } from 'react';
 import { useAppStore } from '../stores/appStore';
 import type { NodeType, Language } from '../types/graph';
-
-const COMMUNITY_COLORS = [
-  '#2563eb', '#16a34a', '#d97706', '#dc2626',
-  '#9333ea', '#ea580c', '#0d9488', '#db2777',
-  '#0284c7', '#65a30d',
-];
+import { NODE_TYPE_COLORS, COMMUNITY_COLORS } from '../constants/colors';
 
 const NODE_TYPES: NodeType[] = ['file', 'function', 'class', 'document', 'data', 'config', 'asset'];
-
-const NODE_TYPE_COLORS: Record<string, string> = {
-  file: '#2563eb',
-  function: '#16a34a',
-  class: '#d97706',
-  route: '#dc2626',
-  table: '#9333ea',
-  module: '#ea580c',
-  interface: '#0d9488',
-  variable: '#0284c7',
-  document: '#6366f1',
-  data: '#0891b2',
-  config: '#78716c',
-  asset: '#f59e0b',
-};
 
 const ClearIcon = () => (
   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">

@@ -1,6 +1,7 @@
 import React, { useEffect, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
 import type { GraphNode } from '../types/graph';
+import { NODE_TYPE_COLORS } from '../constants/colors';
 
 const CloseIcon = () => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -37,21 +38,6 @@ const ConnectionsIcon = () => (
     <path d="M2.2 2.2L4.5 4.5M8.8 2.2L6.5 4.5M2.2 8.8L4.5 6.5M8.8 8.8L6.5 6.5" stroke="currentColor" strokeWidth="0.8" opacity="0.5"/>
   </svg>
 );
-
-const NODE_TYPE_COLORS: Record<string, string> = {
-  file: '#2563eb',
-  function: '#16a34a',
-  class: '#d97706',
-  route: '#dc2626',
-  table: '#9333ea',
-  module: '#ea580c',
-  interface: '#0d9488',
-  variable: '#0284c7',
-  document: '#6366f1',
-  data: '#0891b2',
-  config: '#78716c',
-  asset: '#f59e0b',
-};
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

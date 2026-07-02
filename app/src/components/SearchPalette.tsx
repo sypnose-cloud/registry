@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import * as Dialog from '@radix-ui/react-dialog';
 import { useAppStore } from '../stores/appStore';
 import type { GraphNode } from '../types/graph';
+import { NODE_TYPE_COLORS } from '../constants/colors';
 
 const SearchIcon = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -51,21 +52,6 @@ const NODE_TYPE_ICONS: Record<string, React.ReactNode> = {
       <circle cx="6" cy="6" r="1.5" fill="currentColor" opacity="0.6"/>
     </svg>
   ),
-};
-
-const NODE_TYPE_COLORS: Record<string, string> = {
-  file: '#2563eb',
-  function: '#16a34a',
-  class: '#d97706',
-  route: '#dc2626',
-  table: '#9333ea',
-  module: '#ea580c',
-  interface: '#0d9488',
-  variable: '#0284c7',
-  document: '#6366f1',
-  data: '#0891b2',
-  config: '#78716c',
-  asset: '#f59e0b',
 };
 
 type ResultGroup = {
