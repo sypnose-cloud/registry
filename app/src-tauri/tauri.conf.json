@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Sypnose Registry",
+  "version": "0.1.0",
+  "identifier": "cloud.sypnose.registry",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Sypnose Registry",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": true,
+        "transparent": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Sypnose Cloud",
+    "copyright": "2026 Sypnose Cloud SRL",
+    "category": "Utility",
+    "shortDescription": "Open any folder and see its complete structure as an interactive graph",
+    "longDescription": "Sypnose Registry maps your entire codebase into an interactive knowledge graph. See which API touches which table, which frontend page calls which endpoint, and how your modules connect. Powered by Sigma.js WebGL rendering with ForceAtlas2 force-directed layouts.",
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper" },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

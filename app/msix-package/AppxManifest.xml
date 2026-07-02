@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+         IgnorableNamespaces="uap rescap desktop">
+  <Identity Name="42109FactoriaDatacenter.SypnoseRegistry"
+            Publisher="CN=20D5B5BC-82B1-4ABC-A891-8833937F9AF4"
+            Version="1.0.0.0" />
+  <Properties>
+    <DisplayName>Sypnose Registry</DisplayName>
+    <PublisherDisplayName>Factoria Datacenter</PublisherDisplayName>
+    <Description>Interactive code dependency graph visualizer. Map your entire codebase into a navigable knowledge graph — see which API touches which table, which frontend calls which endpoint, and how modules connect.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="App" Executable="SypnoseRegistry.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Sypnose Registry"
+        Description="Interactive code dependency graph visualizer"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"
+                         Square310x310Logo="Assets\Square310x310Logo.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

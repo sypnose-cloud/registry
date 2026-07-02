@@ -1,0 +1,254 @@
+/* ═══════════════════════════════════════════
+   Sypnose Registry — Global Design System
+   ═══════════════════════════════════════════ */
+
+:root {
+  --bg: #f5f6f8;
+  --panel: #ffffff;
+  --panel-hover: #f0f1f3;
+  --border: #e2e4e8;
+  --border-light: #d0d3d9;
+  --text: #1a1d23;
+  --text-muted: #6b7280;
+  --text-dim: #9ca3af;
+  --accent: #2563eb;
+  --accent-hover: #3b82f6;
+  --accent-dim: rgba(37, 99, 235, 0.1);
+  --success: #16a34a;
+  --success-dim: rgba(22, 163, 74, 0.1);
+  --warning: #d97706;
+  --warning-dim: rgba(217, 119, 6, 0.1);
+  --danger: #dc2626;
+  --danger-dim: rgba(220, 38, 38, 0.1);
+  --radius: 8px;
+  --radius-sm: 4px;
+  --radius-lg: 12px;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 48px rgba(0, 0, 0, 0.12);
+
+  /* Community colors — saturated for light bg */
+  --community-0: #2563eb;
+  --community-1: #16a34a;
+  --community-2: #d97706;
+  --community-3: #dc2626;
+  --community-4: #9333ea;
+  --community-5: #ea580c;
+  --community-6: #0d9488;
+  --community-7: #db2777;
+  --community-8: #0284c7;
+  --community-9: #65a30d;
+}
+
+/* ─── Reset & Base ─── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  user-select: none;
+}
+
+/* ─── Scrollbars ─── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
+}
+
+/* ─── App Layout ─── */
+#root {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ─── Graph canvas area — fills space between toolbar + filterbar + statusbar ─── */
+.graph-area {
+  position: absolute;
+  top: 48px; /* toolbar */
+  bottom: 28px; /* statusbar */
+  left: 0;
+  right: 0;
+  transition: top 0.2s ease;
+}
+
+.graph-area.filter-open {
+  top: 92px; /* toolbar + filterbar */
+}
+
+/* ─── Buttons ─── */
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ─── Inputs ─── */
+input, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+input:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+/* ─── Kbd shortcut badges ─── */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 5px;
+  background: var(--border);
+  border: 1px solid var(--border-light);
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ─── Typography ─── */
+.text-muted {
+  color: var(--text-muted);
+}
+
+.text-accent {
+  color: var(--accent);
+}
+
+.text-success {
+  color: var(--success);
+}
+
+.text-warning {
+  color: var(--warning);
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.text-mono {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', 'Consolas', monospace;
+  font-size: 12px;
+}
+
+/* ─── Type badges ─── */
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.type-badge.file     { background: rgba(37, 99, 235, 0.1); color: #2563eb; }
+.type-badge.function { background: rgba(22, 163, 74, 0.1); color: #16a34a; }
+.type-badge.class    { background: rgba(217, 119, 6, 0.1); color: #d97706; }
+.type-badge.route    { background: rgba(220, 38, 38, 0.1); color: #dc2626; }
+.type-badge.table    { background: rgba(147, 51, 234, 0.1); color: #9333ea; }
+.type-badge.module   { background: rgba(234, 88, 12, 0.1); color: #ea580c; }
+.type-badge.interface { background: rgba(13, 148, 136, 0.1); color: #0d9488; }
+.type-badge.variable  { background: rgba(2, 132, 199, 0.1); color: #0284c7; }
+.type-badge.document  { background: #6366f1; color: white; }
+.type-badge.data      { background: #0891b2; color: white; }
+.type-badge.config    { background: #78716c; color: white; }
+.type-badge.asset     { background: #f59e0b; color: white; }
+
+/* ─── Animations ─── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slideInDown {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes progressBar {
+  0% { background-position: 0 0; }
+  100% { background-position: 40px 0; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ─── Dividers ─── */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 0;
+}
+
+/* ─── Overlay backdrop ─── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(2px);
+  z-index: 100;
+  animation: fadeIn 0.15s ease;
+}

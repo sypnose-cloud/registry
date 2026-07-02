@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Sigma Test</title>
+  <style>
+    body { margin: 0; background: #0c0f14; }
+    #container { width: 100vw; height: 100vh; }
+    #info { position: fixed; top: 10px; left: 10px; color: white; font: 14px monospace; z-index: 100; }
+  </style>
+</head>
+<body>
+  <div id="info">Loading...</div>
+  <div id="container"></div>
+  <script type="module">
+    import Sigma from '/node_modules/sigma/dist/sigma.esm.js';
+    import Graph from '/node_modules/graphology/dist/graphology.esm.js';
+
+    const info = document.getElementById('info');
+    try {
+      const graph = new Graph();
+      graph.addNode('a', { x: 0, y: 0, size: 10, color: '#ff0000', label: 'Node A' });
+      graph.addNode('b', { x: 1, y: 1, size: 10, color: '#00ff00', label: 'Node B' });
+      graph.addNode('c', { x: 1, y: 0, size: 10, color: '#0000ff', label: 'Node C' });
+      graph.addEdge('a', 'b');
+      graph.addEdge('b', 'c');
+      graph.addEdge('c', 'a');
+
+      const container = document.getElementById('container');
+      const sigma = new Sigma(graph, container);
+      info.textContent = `Sigma OK! Nodes: ${graph.order}, Edges: ${graph.size}`;
+    } catch (e) {
+      info.textContent = `ERROR: ${e.message}`;
+      console.error(e);
+    }
+  </script>
+</body>
+</html>
