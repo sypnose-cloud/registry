@@ -121,6 +121,19 @@ impl WatcherState {
                                             graph.edges.len(),
                                             GRAPH_UPDATED_EVENT
                                         ));
+                                        // M3: record a temporal snapshot (+ diff) for the
+                                        // slider BEFORE emitting. history.db lives in
+                                        // graphify-out/ (watcher-excluded) so this write
+                                        // never re-triggers the watcher. Best-effort.
+                                        let proj = watch_root.to_string_lossy().to_string();
+                                        match crate::history::record_index(&watch_root, &json, &proj) {
+                                            Ok(scan_id) => log_line(&format!(
+                                                "[watcher] snapshot recorded — scan_id {}", scan_id
+                                            )),
+                                            Err(e) => log_line(&format!(
+                                                "[watcher] snapshot skipped: {}", e
+                                            )),
+                                        }
                                         if let Err(e) = app_for_handler.emit(GRAPH_UPDATED_EVENT, json) {
                                             log_line(&format!("[watcher] emit failed: {}", e));
                                         }

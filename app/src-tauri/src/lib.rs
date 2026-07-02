@@ -1,6 +1,7 @@
 mod indexer;
 mod ai_bridge;
 mod watcher;
+mod history;
 
 use std::fs;
 use std::path::PathBuf;
@@ -103,7 +104,31 @@ fn index_project(path: String, bridge: tauri::State<'_, Arc<ai_bridge::AiBridge>
     bridge.update_graph(name, &path, &json, graph.nodes.len(), graph.edges.len(),
         graph.metadata.communities.len());
 
+    // M3: record a temporal snapshot (+ diff). Best-effort — a read-only folder
+    // just means no history; indexing still succeeds.
+    if let Err(e) = history::record_index(&root, &json, &path) {
+        eprintln!("[history] snapshot skipped for {}: {}", path, e);
+    }
+
     Ok(json)
+}
+
+/// M3: list all recorded scans for a project (slider tick data).
+#[tauri::command]
+fn list_snapshots(path: String) -> Result<Vec<history::ScanSummary>, String> {
+    history::list_scans(&PathBuf::from(path))
+}
+
+/// M3: reconstruct the exact graph JSON stored for a scan (time travel — no disk re-index).
+#[tauri::command]
+fn get_snapshot(path: String, scan_id: i64) -> Result<String, String> {
+    history::get_snapshot(&PathBuf::from(path), scan_id)
+}
+
+/// M3: change events for a scan (slider overlay: added/removed/modified vs previous).
+#[tauri::command]
+fn get_changes(path: String, scan_id: i64) -> Result<Vec<history::ChangeEvent>, String> {
+    history::get_changes(&PathBuf::from(path), scan_id)
 }
 
 /// Start (or restart) the live watcher on `path`. Any previously-active watcher
@@ -229,6 +254,9 @@ pub fn run() {
             start_watch,
             stop_watch,
             watched_path,
+            list_snapshots,
+            get_snapshot,
+            get_changes,
             get_recent_projects,
             save_recent_project,
             open_file_in_os,

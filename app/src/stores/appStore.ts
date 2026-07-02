@@ -6,6 +6,32 @@ interface SelectionHistoryEntry {
   timestamp: number;
 }
 
+// ── M3: temporal memory / time-slider ──────────────────────────────────
+export interface ScanSummary {
+  scan_id: number;
+  ts: string;
+  node_count: number;
+  edge_count: number;
+  added: number;
+  removed: number;
+  modified: number;
+}
+
+export interface ChangeEvent {
+  entity_id: string;
+  entity_kind: 'node' | 'edge';
+  change_type: 'added' | 'removed' | 'modified';
+  payload_json: string;
+}
+
+/**
+ * View mode governs the interaction between M2 (live watcher) and M3 (time travel):
+ *  - 'live': the watcher's graph-updated events flow into the graph (present).
+ *  - 'historical': the graph is frozen on a past snapshot; graph-updated events
+ *    are IGNORED so the past view is not stomped. Returning to 'live' re-engages.
+ */
+export type ViewMode = 'live' | 'historical';
+
 interface AppState {
   // Graph data
   graph: UnifiedGraph | null;
@@ -55,6 +81,26 @@ interface AppState {
   // Fit graph to view
   fitRequestId: number;
   requestFit: () => void;
+
+  // ── M3: temporal memory / time-slider ──
+  /** Active project path (set when a folder loads) — needed for snapshot commands. */
+  projectPath: string | null;
+  setProjectPath: (path: string | null) => void;
+
+  /** All recorded scans (oldest first). Slider is shown only when length > 1. */
+  historyScans: ScanSummary[];
+  setHistoryScans: (scans: ScanSummary[]) => void;
+
+  /** 'live' (present, watcher active) vs 'historical' (frozen on a past snapshot). */
+  viewMode: ViewMode;
+  /** scan_id currently being viewed in historical mode (null in live mode). */
+  activeScanId: number | null;
+  /** Change overlay (added/removed/modified) for the active historical scan. */
+  changeOverlay: ChangeEvent[];
+  /** Enter historical mode on a given scan with its change overlay. */
+  enterHistorical: (scanId: number, overlay: ChangeEvent[]) => void;
+  /** Return to live/present mode (re-engages the watcher view). */
+  returnToLive: () => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -165,4 +211,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Fit graph to view
   fitRequestId: 0,
   requestFit: () => set((s) => ({ fitRequestId: s.fitRequestId + 1 })),
+
+  // ── M3: temporal memory / time-slider ──
+  projectPath: null,
+  setProjectPath: (path) => set({ projectPath: path }),
+
+  historyScans: [],
+  setHistoryScans: (scans) => set({ historyScans: scans }),
+
+  viewMode: 'live',
+  activeScanId: null,
+  changeOverlay: [],
+  enterHistorical: (scanId, overlay) =>
+    set({ viewMode: 'historical', activeScanId: scanId, changeOverlay: overlay }),
+  returnToLive: () =>
+    set({ viewMode: 'live', activeScanId: null, changeOverlay: [] }),
 }));
