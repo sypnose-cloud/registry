@@ -26,7 +26,12 @@ npx tauri build
 
 echo "=== Preparing MSIX staging ==="
 mkdir -p "$STAGING/Assets"
-cp "$RELEASE/sypnose-registry.exe" "$STAGING/"
+# Binaries
+cp "$RELEASE/sypnose-registry.exe" "$STAGING/SypnoseRegistry.exe"
+cp "$RELEASE/app_lib.dll" "$STAGING/" 2>/dev/null || true
+# AppxManifest: canonical source in msix-package/ (version controlled)
+cp "$APP_DIR/msix-package/AppxManifest.xml" "$STAGING/"
+# Assets
 cp "$TAURI_DIR/icons/Square150x150Logo.png" "$STAGING/Assets/"
 cp "$TAURI_DIR/icons/Square44x44Logo.png" "$STAGING/Assets/"
 cp "$TAURI_DIR/icons/StoreLogo.png" "$STAGING/Assets/"
