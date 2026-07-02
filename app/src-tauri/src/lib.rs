@@ -1,5 +1,6 @@
 mod indexer;
 mod ai_bridge;
+mod watcher;
 
 use std::fs;
 use std::path::PathBuf;
@@ -105,6 +106,30 @@ fn index_project(path: String, bridge: tauri::State<'_, Arc<ai_bridge::AiBridge>
     Ok(json)
 }
 
+/// Start (or restart) the live watcher on `path`. Any previously-active watcher
+/// is torn down first, so opening another folder never leaves an orphan watcher.
+#[tauri::command]
+fn start_watch(
+    path: String,
+    state: tauri::State<'_, Arc<watcher::WatcherState>>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    state.start(PathBuf::from(path), app)
+}
+
+/// Stop the live watcher (Live toggle off, or leaving the project).
+#[tauri::command]
+fn stop_watch(state: tauri::State<'_, Arc<watcher::WatcherState>>) -> Result<(), String> {
+    state.stop();
+    Ok(())
+}
+
+/// Path currently being watched, if any (used by tests / UI state).
+#[tauri::command]
+fn watched_path(state: tauri::State<'_, Arc<watcher::WatcherState>>) -> Result<Option<String>, String> {
+    Ok(state.watched_path().map(|p| p.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 fn get_recent_projects() -> Result<Vec<RecentProject>, String> {
     let config = load_config();
@@ -191,13 +216,19 @@ pub fn run() {
     let bridge = Arc::new(ai_bridge::AiBridge::new());
     bridge.start(44444);
 
+    let watcher_state = Arc::new(watcher::WatcherState::new());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(bridge)
+        .manage(watcher_state)
         .invoke_handler(tauri::generate_handler![
             open_folder_dialog,
             read_graph_json,
             index_project,
+            start_watch,
+            stop_watch,
+            watched_path,
             get_recent_projects,
             save_recent_project,
             open_file_in_os,

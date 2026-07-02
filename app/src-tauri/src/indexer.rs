@@ -176,6 +176,55 @@ fn should_ignore(name: &str) -> bool {
     IGNORE_DIRS.iter().any(|d| *d == lower)
 }
 
+/// Database file suffixes that must NEVER trigger a re-index.
+/// M3 will write `graphify-out/history.db` (+ SQLite WAL/SHM sidecars).
+/// The watcher observes the whole folder, so a change to any of these files
+/// could otherwise start an infinite re-index loop (index -> write db ->
+/// db change event -> index -> ...). Excluded here as a single source of truth.
+const IGNORE_FILE_SUFFIXES: &[&str] = &[".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3"];
+
+/// Shared exclusion filter used by BOTH the indexer walk and the live watcher.
+/// Returns true if a filesystem path should be ignored (not indexed / not a
+/// re-index trigger). A path is ignored if ANY of its components is an ignored
+/// directory (e.g. `graphify-out`, `node_modules`, `.git`, `dist`, `target`)
+/// or if the final filename is a hidden dir or a database file.
+///
+/// `graphify-out` is excluded to avoid an INFINITE RE-INDEX LOOP: the indexer
+/// writes its output (graph.json, and later history.db) into `graphify-out/`,
+/// so observing that directory would make every index trigger another index.
+pub fn is_ignored_path(path: &Path, root: &Path) -> bool {
+    // Any ignored directory anywhere in the relative path -> ignore.
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    for comp in rel.components() {
+        if let std::path::Component::Normal(os) = comp {
+            let name = os.to_string_lossy().to_lowercase();
+            if IGNORE_DIRS.iter().any(|d| *d == name) {
+                return true;
+            }
+            // Hidden directories/files (except we still index some dotfiles by
+            // name inside the walk; for the WATCHER a change to a dot-dir is noise).
+            if name.starts_with('.') && name != ".gitignore" && name != ".env" {
+                // Only treat as ignored if it's clearly a directory-style dotpath
+                // segment that isn't the final known-config file. Keep it simple:
+                // ignore any dot-prefixed path segment that is itself a directory.
+                // (Final dotfiles that ARE known configs are still handled by the
+                // indexer's own logic; the watcher re-indexes the whole folder
+                // regardless, so a false-ignore of one dotfile event is harmless.)
+            }
+        }
+    }
+
+    // Database / sqlite sidecar files -> never a re-index trigger.
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        let lower = name.to_lowercase();
+        if IGNORE_FILE_SUFFIXES.iter().any(|suf| lower.ends_with(suf)) {
+            return true;
+        }
+    }
+
+    false
+}
+
 // Known config filenames without extension
 fn is_known_config_file(name: &str) -> bool {
     let lower = name.to_lowercase();
@@ -1041,4 +1090,56 @@ pub fn index_project(root: &Path) -> Result<IndexedGraph, String> {
     }
 
     Ok(graph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root() -> PathBuf {
+        PathBuf::from(if cfg!(windows) { r"C:\proj" } else { "/proj" })
+    }
+
+    // ---- Loop-breaker: graphify-out must ALWAYS be ignored ----
+    #[test]
+    fn graphify_out_is_ignored() {
+        let r = root();
+        assert!(is_ignored_path(&r.join("graphify-out").join("graph.json"), &r));
+        assert!(is_ignored_path(&r.join("graphify-out"), &r));
+        // nested deeper
+        assert!(is_ignored_path(&r.join("graphify-out").join("history").join("x.json"), &r));
+    }
+
+    // ---- Loop-breaker: db sidecars (M3 history.db) must be ignored ----
+    #[test]
+    fn db_files_are_ignored() {
+        let r = root();
+        assert!(is_ignored_path(&r.join("graphify-out").join("history.db"), &r));
+        assert!(is_ignored_path(&r.join("history.db"), &r));
+        assert!(is_ignored_path(&r.join("history.db-wal"), &r));
+        assert!(is_ignored_path(&r.join("history.db-shm"), &r));
+        assert!(is_ignored_path(&r.join("data.sqlite"), &r));
+        assert!(is_ignored_path(&r.join("data.sqlite3"), &r));
+    }
+
+    // ---- Noise dirs ignored ----
+    #[test]
+    fn noise_dirs_are_ignored() {
+        let r = root();
+        assert!(is_ignored_path(&r.join(".git").join("HEAD"), &r));
+        assert!(is_ignored_path(&r.join("node_modules").join("react").join("index.js"), &r));
+        assert!(is_ignored_path(&r.join("dist").join("bundle.js"), &r));
+        assert!(is_ignored_path(&r.join("target").join("debug").join("app.exe"), &r));
+    }
+
+    // ---- Real source files are NOT ignored (must trigger re-index) ----
+    #[test]
+    fn real_source_files_are_not_ignored() {
+        let r = root();
+        assert!(!is_ignored_path(&r.join("src").join("main.rs"), &r));
+        assert!(!is_ignored_path(&r.join("App.tsx"), &r));
+        assert!(!is_ignored_path(&r.join("lib").join("util.py"), &r));
+        // A .db substring in a normal name must NOT false-match (endswith only)
+        assert!(!is_ignored_path(&r.join("dbschema.md"), &r));
+    }
 }

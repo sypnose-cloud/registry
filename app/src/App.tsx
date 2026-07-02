@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './styles/global.css';
 
 import { Toolbar } from './components/Toolbar';
@@ -246,6 +246,74 @@ function App() {
       setLoadError(`Could not load graph from "${path}".`);
     }
   }, [loadGraph, setGraph, setStats, setIndexing]);
+
+  // ── M2: Live watcher ──────────────────────────────────────────────────
+  // When a folder is loaded (graph.projectPath is set), start the watcher
+  // and subscribe to `graph-updated` events from the Rust backend.
+  // Cleanup: unlisten from the event + stop the watcher when the folder
+  // changes or the component unmounts (prevents orphan watchers/listeners).
+  useEffect(() => {
+    if (!graph?.projectPath) return;
+
+    const projectPath = graph.projectPath;
+    let unlistenFn: (() => void) | null = null;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const { listen } = await import('@tauri-apps/api/event');
+
+        // Subscribe BEFORE starting the watcher so we never miss the first event.
+        const unlisten = await listen<string>('graph-updated', (event) => {
+          if (cancelled) return;
+          try {
+            const raw = JSON.parse(event.payload) as Record<string, unknown>;
+            const updated = adaptRawGraph(raw, projectPath);
+            setGraph(updated);
+            setStats({
+              nodeCount: updated.nodes?.length ?? 0,
+              edgeCount: updated.edges?.length ?? 0,
+              communityCount: updated.communities?.length ?? 0,
+            });
+          } catch (err) {
+            console.error('[M2] graph-updated parse error:', err);
+          }
+        });
+
+        if (cancelled) {
+          // Effect cleaned up before the async subscribe finished — immediately unlisten.
+          unlisten();
+          return;
+        }
+
+        unlistenFn = unlisten;
+
+        // Start the OS watcher on this folder (tears down any previous watcher first).
+        await invoke('start_watch', { path: projectPath });
+        console.log('[M2] watcher started for', projectPath);
+      } catch (err) {
+        // Running in browser dev mode (no Tauri) — silently skip.
+        console.warn('[M2] start_watch not available (browser mode?):', err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      // Cleanup: remove the event listener and stop the backend watcher.
+      if (unlistenFn) unlistenFn();
+      (async () => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke('stop_watch');
+          console.log('[M2] watcher stopped for', projectPath);
+        } catch {
+          // Silently ignore in browser mode.
+        }
+      })();
+    };
+  }, [graph?.projectPath, setGraph, setStats]);
+  // ── end M2 ──────────────────────────────────────────────────────────
 
   const handleBack = useCallback(() => {
     setShowWelcome(true);

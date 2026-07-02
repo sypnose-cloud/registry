@@ -236,6 +236,12 @@ kbd {
   50% { opacity: 0.5; }
 }
 
+/* M2: live watcher dot pulse */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 5px rgba(220, 38, 38, 0.6); }
+  50% { opacity: 0.5; box-shadow: 0 0 2px rgba(220, 38, 38, 0.2); }
+}
+
 /* ─── Dividers ─── */
 .divider {
   height: 1px;

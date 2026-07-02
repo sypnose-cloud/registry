@@ -40,6 +40,8 @@ const AiIcon = () => (
 export const StatusBar: React.FC = () => {
   const { stats, requestFit } = useAppStore();
   const [aiConnected, setAiConnected] = useState(false);
+  // M2: live watcher indicator — polls the backend for the watched path.
+  const [liveWatching, setLiveWatching] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -54,6 +56,23 @@ export const StatusBar: React.FC = () => {
     };
     check();
     const interval = setInterval(check, 5000);
+    return () => { active = false; clearInterval(interval); };
+  }, []);
+
+  // M2: poll the watched_path command every 2s to show live status.
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const path = await invoke<string | null>('watched_path');
+        if (active) setLiveWatching(path != null);
+      } catch {
+        if (active) setLiveWatching(false);
+      }
+    };
+    check();
+    const interval = setInterval(check, 2000);
     return () => { active = false; clearInterval(interval); };
   }, []);
 
@@ -148,30 +167,59 @@ export const StatusBar: React.FC = () => {
         </div>
       </div>
 
-      {/* Center: AI Bridge status */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        padding: '2px 10px',
-        borderRadius: 'var(--radius-sm)',
-        background: aiConnected ? 'rgba(22, 163, 106, 0.1)' : 'transparent',
-        border: `1px solid ${aiConnected ? 'rgba(22, 163, 106, 0.3)' : 'var(--border)'}`,
-        color: aiConnected ? '#16a34a' : 'var(--text-dim)',
-        fontSize: 10,
-        fontWeight: 500,
-        transition: 'all 0.3s',
-      }}>
-        <span style={{
-          width: 6,
-          height: 6,
-          borderRadius: '50%',
-          background: aiConnected ? '#16a34a' : 'var(--text-dim)',
-          boxShadow: aiConnected ? '0 0 6px rgba(22, 163, 106, 0.5)' : 'none',
+      {/* Center: Live watcher + AI Bridge status */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* M2: Live indicator */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 5,
+          padding: '2px 8px',
+          borderRadius: 'var(--radius-sm)',
+          background: liveWatching ? 'rgba(220, 38, 38, 0.1)' : 'transparent',
+          border: `1px solid ${liveWatching ? 'rgba(220, 38, 38, 0.3)' : 'var(--border)'}`,
+          color: liveWatching ? '#dc2626' : 'var(--text-dim)',
+          fontSize: 10,
+          fontWeight: 600,
           transition: 'all 0.3s',
-        }} />
-        <AiIcon />
-        <span>{aiConnected ? 'AI Connected' : 'AI Bridge :44444'}</span>
+        }}>
+          <span style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: liveWatching ? '#dc2626' : 'var(--text-dim)',
+            boxShadow: liveWatching ? '0 0 5px rgba(220, 38, 38, 0.6)' : 'none',
+            animation: liveWatching ? 'livePulse 1.8s ease-in-out infinite' : 'none',
+            transition: 'all 0.3s',
+          }} />
+          <span>{liveWatching ? 'Live' : 'Live off'}</span>
+        </div>
+
+        {/* AI Bridge status */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          padding: '2px 10px',
+          borderRadius: 'var(--radius-sm)',
+          background: aiConnected ? 'rgba(22, 163, 106, 0.1)' : 'transparent',
+          border: `1px solid ${aiConnected ? 'rgba(22, 163, 106, 0.3)' : 'var(--border)'}`,
+          color: aiConnected ? '#16a34a' : 'var(--text-dim)',
+          fontSize: 10,
+          fontWeight: 500,
+          transition: 'all 0.3s',
+        }}>
+          <span style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: aiConnected ? '#16a34a' : 'var(--text-dim)',
+            boxShadow: aiConnected ? '0 0 6px rgba(22, 163, 106, 0.5)' : 'none',
+            transition: 'all 0.3s',
+          }} />
+          <AiIcon />
+          <span>{aiConnected ? 'AI Connected' : 'AI Bridge :44444'}</span>
+        </div>
       </div>
 
       {/* Right: Zoom + Fit */}
