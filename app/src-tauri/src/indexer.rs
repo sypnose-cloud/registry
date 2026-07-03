@@ -362,6 +362,7 @@ fn analyze_code(path: &Path, ext: &str) -> Option<CodeAnalysis> {
         "py" | "pyw" => extract_imports_python(&content),
         "rs" => extract_imports_rust(&content),
         "go" => extract_imports_go(&content),
+        "cs" => extract_imports_csharp(&content),
         _ => vec![],
     };
 
@@ -374,12 +375,14 @@ fn analyze_code(path: &Path, ext: &str) -> Option<CodeAnalysis> {
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "vue" | "svelte" => extract_functions_ts(&content),
         "py" | "pyw" => extract_functions_python(&content),
         "rs" => extract_functions_rust(&content),
+        "cs" => extract_functions_csharp(&content),
         _ => vec![],
     };
 
     let classes = match ext {
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => extract_classes_ts(&content),
         "py" | "pyw" => extract_classes_python(&content),
+        "cs" => extract_classes_csharp(&content),
         _ => vec![],
     };
 
@@ -615,6 +618,115 @@ fn extract_functions_rust(content: &str) -> Vec<String> {
         }
     }
     funcs
+}
+
+// --- C# extractors (same line-based style as the others) ---
+
+fn extract_imports_csharp(content: &str) -> Vec<String> {
+    let mut imports = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // `using System.IO;` / `using static X.Y;` / `global using X;`
+        // Skip using-statements (`using (var x = ...)`) and aliases keep the target.
+        let rest = if let Some(r) = trimmed.strip_prefix("global using ") {
+            r
+        } else if let Some(r) = trimmed.strip_prefix("using static ") {
+            r
+        } else if let Some(r) = trimmed.strip_prefix("using ") {
+            r
+        } else {
+            continue;
+        };
+        if rest.starts_with('(') {
+            continue; // using-statement, not an import
+        }
+        // Alias form: `using Alias = Some.Namespace;` -> keep the namespace.
+        let target = match rest.split_once('=') {
+            Some((_, ns)) => ns,
+            None => rest,
+        };
+        let ns = target.trim().trim_end_matches(';').trim();
+        // Root namespace only, consistent with extract_imports_rust (skip System).
+        if let Some(root) = ns.split('.').next() {
+            if !root.is_empty() && root != "System" {
+                imports.push(root.to_string());
+            }
+        }
+    }
+    imports
+}
+
+fn extract_functions_csharp(content: &str) -> Vec<String> {
+    let mut funcs = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        // Heuristic: an access modifier + a `(` on the same line, not a type decl
+        // and not a control-flow keyword. Covers `public void Foo(`,
+        // `private static async Task<int> Bar(`, `internal string Baz(` ...
+        let has_modifier = trimmed.starts_with("public ")
+            || trimmed.starts_with("private ")
+            || trimmed.starts_with("protected ")
+            || trimmed.starts_with("internal ")
+            || trimmed.starts_with("static ");
+        if !has_modifier || !trimmed.contains('(') {
+            continue;
+        }
+        if trimmed.contains(" class ") || trimmed.contains(" interface ")
+            || trimmed.contains(" record ") || trimmed.contains(" struct ")
+            || trimmed.contains(" enum ") || trimmed.contains(" delegate ")
+            || trimmed.contains('=') && trimmed.find('=') < trimmed.find('(')
+        {
+            continue;
+        }
+        // Name = LAST identifier before the '(' (return types like `Task<int>`
+        // are earlier words, so take the last word FIRST, then strip generics
+        // from the method name itself: `GetName<T>` -> `GetName`).
+        let head = &trimmed[..trimmed.find('(').unwrap()];
+        if let Some(name) = head.split_whitespace().last() {
+            let name = name.split('<').next().unwrap_or(name).trim();
+            let is_ident = !name.is_empty()
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
+            // Skip constructors-of-keywords like `if/for/while/switch/using/catch`.
+            let is_keyword = matches!(name, "if" | "for" | "foreach" | "while"
+                | "switch" | "using" | "catch" | "lock" | "return" | "new");
+            if is_ident && !is_keyword {
+                funcs.push(name.to_string());
+            }
+        }
+    }
+    funcs
+}
+
+fn extract_classes_csharp(content: &str) -> Vec<String> {
+    let mut classes = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        for kw in ["class ", "interface ", "record ", "struct "] {
+            if let Some(pos) = trimmed.find(kw) {
+                // Must be a declaration (start of line or after modifiers), not a
+                // mention inside a comment/string — cheap check: what precedes the
+                // keyword must be only modifier-ish words.
+                let before = &trimmed[..pos];
+                let ok_before = before.split_whitespace().all(|w| matches!(w,
+                    "public" | "private" | "protected" | "internal" | "static"
+                    | "abstract" | "sealed" | "partial" | "readonly" | "ref" | "new"));
+                if !ok_before {
+                    continue;
+                }
+                let rest = &trimmed[pos + kw.len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_alphanumeric() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    classes.push(name);
+                }
+                break; // one declaration per line
+            }
+        }
+    }
+    classes
 }
 
 fn resolve_import(import_path: &str, source_dir: &str, file_map: &HashMap<String, String>) -> Option<String> {
@@ -1098,6 +1210,69 @@ mod tests {
 
     fn root() -> PathBuf {
         PathBuf::from(if cfg!(windows) { r"C:\proj" } else { "/proj" })
+    }
+
+    // ---- C# extractors (v2.1: C# was classified but never parsed) ----
+
+    const CSHARP_SAMPLE: &str = r#"
+using System;
+using System.IO;
+using MultiInstanceClaudeDesktop.Core;
+using static System.Math;
+global using Xunit;
+using Alias = Newtonsoft.Json.Linq;
+
+namespace Demo
+{
+    public sealed partial class InstanceStore
+    {
+        public static InstanceInfo CreateInstance(string name) { return null; }
+        private async Task<int> LoadAsync() { return 0; }
+        internal string GetName<T>(T x) { return ""; }
+        protected void OnChange() { }
+        // not methods:
+        public string Name = "x";
+        if (foo) { }
+    }
+
+    public interface IWidget { }
+    internal record CopyResult(bool Success);
+    public struct Point { }
+}
+"#;
+
+    #[test]
+    fn csharp_imports_extracts_root_namespaces_not_system() {
+        let imports = extract_imports_csharp(CSHARP_SAMPLE);
+        assert!(imports.contains(&"MultiInstanceClaudeDesktop".to_string()),
+            "project namespace must be extracted, got {:?}", imports);
+        assert!(imports.contains(&"Xunit".to_string()), "global using must count");
+        assert!(imports.contains(&"Newtonsoft".to_string()), "alias target must count");
+        assert!(!imports.iter().any(|i| i == "System"),
+            "System must be skipped (like std in rust), got {:?}", imports);
+        eprintln!("CSHARP-IMPORTS: PASS {:?}", imports);
+    }
+
+    #[test]
+    fn csharp_functions_extracts_methods_not_fields_or_keywords() {
+        let funcs = extract_functions_csharp(CSHARP_SAMPLE);
+        for expected in ["CreateInstance", "LoadAsync", "GetName", "OnChange"] {
+            assert!(funcs.contains(&expected.to_string()),
+                "{} must be extracted, got {:?}", expected, funcs);
+        }
+        assert!(!funcs.contains(&"Name".to_string()), "field must NOT be a function");
+        assert!(!funcs.contains(&"if".to_string()), "keywords must NOT be functions");
+        eprintln!("CSHARP-FUNCTIONS: PASS {:?}", funcs);
+    }
+
+    #[test]
+    fn csharp_classes_extracts_types() {
+        let classes = extract_classes_csharp(CSHARP_SAMPLE);
+        for expected in ["InstanceStore", "IWidget", "CopyResult", "Point"] {
+            assert!(classes.contains(&expected.to_string()),
+                "{} must be extracted, got {:?}", expected, classes);
+        }
+        eprintln!("CSHARP-CLASSES: PASS {:?}", classes);
     }
 
     // ---- Loop-breaker: graphify-out must ALWAYS be ignored ----
