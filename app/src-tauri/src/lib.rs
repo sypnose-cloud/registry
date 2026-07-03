@@ -164,6 +164,32 @@ fn export_digest(path: String, graph_json: String, dest_dir: Option<String>) -> 
     export::write_digest(&path, &graph_json, dest_dir)
 }
 
+/// v2.2 wizard: everything the NotebookLM setup screen needs, in one call.
+#[tauri::command]
+fn nb_get_state() -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "drive_detected": export::detect_drive_dir(),
+        "digest_dir": chat::get_digest_dir(),
+        "connected": chat::get_nb_connected(),
+    }))
+}
+
+/// v2.2 wizard: persist that the user completed the one-time NotebookLM setup.
+#[tauri::command]
+fn nb_set_connected(connected: bool) -> Result<(), String> {
+    chat::set_nb_connected(connected)
+}
+
+/// v2.2 wizard: open NotebookLM in the default browser (a URL, so this is safe
+/// with the opener — nothing local is executed).
+#[tauri::command]
+async fn open_notebooklm(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url("https://notebooklm.google.com", None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 /// M5: open a folder picker so the user chooses (once) their Drive-synced digest
 /// folder. Persists and returns the chosen path (None if the dialog was cancelled).
 #[tauri::command]
@@ -411,6 +437,9 @@ pub fn run() {
             get_api_key_status,
             export_digest,
             pick_digest_dir,
+            nb_get_state,
+            nb_set_connected,
+            open_notebooklm,
             get_digest_dir,
             notebooklm_status,
             get_recent_projects,

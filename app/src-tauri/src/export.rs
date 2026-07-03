@@ -337,6 +337,44 @@ pub fn write_digest(
 }
 
 // ─────────────────────────────────────────────────────────────
+// v2.2 — "NotebookLM in 2 clicks" wizard support.
+// ─────────────────────────────────────────────────────────────
+
+/// Return the first existing directory among candidates. Split out (pure over
+/// the filesystem probe) so the candidate-ordering logic is unit-testable.
+fn first_existing_dir(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(|p| p.is_dir())
+}
+
+/// Candidate locations where the Google Drive desktop client exposes the local
+/// sync folder, most-likely first:
+///   - Drive for Desktop mounts a drive letter (G: by default) with a
+///     "My Drive"/"Mi unidad" root.
+///   - The legacy client synced to %USERPROFILE%\Google Drive.
+fn drive_dir_candidates(home: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut cands = Vec::new();
+    for letter in ["G", "H", "I", "J", "K", "D", "E", "F"] {
+        for name in ["My Drive", "Mi unidad"] {
+            cands.push(PathBuf::from(format!("{}:\\{}", letter, name)));
+        }
+    }
+    if let Some(h) = home {
+        for name in ["Google Drive", "My Drive", "Mi unidad"] {
+            cands.push(h.join(name));
+        }
+    }
+    cands
+}
+
+/// Auto-detect the user's Google Drive sync folder ("" if not found). The wizard
+/// shows this pre-selected so connecting NotebookLM is one click; if not found,
+/// the UI falls back to the folder picker.
+pub fn detect_drive_dir() -> Option<String> {
+    first_existing_dir(drive_dir_candidates(dirs::home_dir()))
+        .map(|p| p.to_string_lossy().to_string())
+}
+
+// ─────────────────────────────────────────────────────────────
 // Vía B — EXPERIMENTAL stub (unofficial Google APIs; OFF by default).
 // ─────────────────────────────────────────────────────────────
 
@@ -367,6 +405,33 @@ pub fn notebooklm_status() -> NotebookLmStatus {
         cli_available,
         experimental: true,
         note: "EXPERIMENTAL (unofficial Google APIs). Use Vía A: export to a Drive-synced folder.".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod wizard_tests {
+    use super::*;
+
+    #[test]
+    fn drive_candidates_prefer_g_my_drive_then_home() {
+        let home = PathBuf::from(if cfg!(windows) { r"C:\Users\x" } else { "/home/x" });
+        let cands = drive_dir_candidates(Some(home.clone()));
+        // G:\My Drive is the single most likely location -> must be first.
+        assert_eq!(cands[0], PathBuf::from("G:\\My Drive"));
+        // Spanish locale root must be covered.
+        assert!(cands.iter().any(|c| c.ends_with("Mi unidad")));
+        // Home fallbacks must be present, after the drive letters.
+        assert!(cands.iter().any(|c| c == &home.join("Google Drive")));
+    }
+
+    #[test]
+    fn first_existing_dir_picks_first_present() {
+        // Nonexistent everywhere -> None (deterministic, no filesystem assumptions).
+        let none = first_existing_dir(vec![
+            PathBuf::from("Z:\\definitely\\nope"),
+            PathBuf::from("Z:\\also\\nope"),
+        ]);
+        assert!(none.is_none());
     }
 }
 

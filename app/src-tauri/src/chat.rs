@@ -44,6 +44,10 @@ struct Settings {
     /// `#[serde(default)]` keeps old settings files (which lack this key) readable.
     #[serde(default)]
     digest_dir: String,
+    /// v2.2: the user completed the one-time NotebookLM setup (added the digest
+    /// as a source in their notebook). Drives the wizard-vs-synced button state.
+    #[serde(default)]
+    nb_connected: bool,
 }
 
 fn load_settings() -> Settings {
@@ -111,6 +115,18 @@ pub fn get_digest_dir() -> String {
 pub fn set_digest_dir(dir: &str) -> Result<(), String> {
     let mut s = load_settings();
     s.digest_dir = dir.trim().to_string();
+    save_settings(&s)
+}
+
+/// v2.2: whether the one-time NotebookLM setup was completed.
+pub fn get_nb_connected() -> bool {
+    load_settings().nb_connected
+}
+
+/// v2.2: persist completion of the one-time NotebookLM setup.
+pub fn set_nb_connected(connected: bool) -> Result<(), String> {
+    let mut s = load_settings();
+    s.nb_connected = connected;
     save_settings(&s)
 }
 

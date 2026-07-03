@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '../stores/appStore';
+import { NotebookLmWizard } from './NotebookLmWizard';
 
 // SVG Icons inline
 const BackIcon = () => (
@@ -47,38 +48,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   projectName = 'Sypnose Registry',
   onBack,
 }) => {
-  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen, graph, projectPath } = useAppStore();
+  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen, graph } = useAppStore();
 
-  // M5: one-shot export state (no persistent panel — transient feedback only).
-  const [exporting, setExporting] = useState(false);
-  const [exportMsg, setExportMsg] = useState<{ ok: boolean; text: string; path?: string } | null>(null);
-
-  const handleExport = useCallback(async () => {
-    if (exporting || !graph) return;
-    setExporting(true);
-    setExportMsg(null);
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      // Send the currently-visible graph (live or historical snapshot), same as chat.
-      const graphJson = JSON.stringify(graph);
-      const path = projectPath ?? graph.projectPath ?? '';
-      const written = await invoke<string>('export_digest', { path, graphJson });
-      setExportMsg({ ok: true, text: 'Digest exported', path: written });
-    } catch (err) {
-      setExportMsg({ ok: false, text: `Export failed: ${String(err)}` });
-    } finally {
-      setExporting(false);
-    }
-  }, [exporting, graph, projectPath]);
-
-  const revealDigest = useCallback(async (p: string) => {
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('reveal_in_explorer', { path: p });
-    } catch {
-      /* best-effort; ignore */
-    }
-  }, []);
+  // v2.2: NotebookLM wizard overlay (replaces the old one-shot export + toast).
+  const [nbOpen, setNbOpen] = useState(false);
 
   const styles: Record<string, AnyStyle> = {
     toolbar: {
@@ -320,28 +293,25 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <ChatIcon />
         </button>
 
-        {/* M5: Export digest (one-shot). Disabled when no graph is loaded. */}
+        {/* v2.2: NotebookLM wizard (2 clicks). Disabled when no graph is loaded. */}
         <button
           style={{
             ...styles.iconBtn,
-            ...(exporting ? styles.iconBtnActive : {}),
             opacity: graph ? 1 : 0.4,
             cursor: graph ? 'pointer' : 'default',
           }}
-          onClick={handleExport}
-          disabled={!graph || exporting}
-          title={graph ? 'Export digest (Markdown for NotebookLM / Drive)' : 'Load a folder first'}
+          onClick={() => graph && setNbOpen(true)}
+          disabled={!graph}
+          title={graph ? 'Connect this folder to NotebookLM (2 clicks)' : 'Load a folder first'}
           onMouseEnter={e => {
-            if (graph && !exporting) {
+            if (graph) {
               (e.currentTarget as HTMLButtonElement).style.background = 'var(--panel-hover)';
               (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
             }
           }}
           onMouseLeave={e => {
-            if (!exporting) {
-              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
-              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)';
-            }
+            (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)';
           }}
         >
           <ExportIcon />
@@ -349,29 +319,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       </div>
 
-      {/* M5: transient export result toast (path + reveal), auto-shown after export. */}
-      {exportMsg && (
-        <div style={styles.toast}>
-          <span style={{ color: exportMsg.ok ? 'var(--accent)' : 'var(--danger, #e5484d)' }}>
-            {exportMsg.ok ? '✓' : '✕'}
-          </span>
-          <span style={styles.toastText} title={exportMsg.path ?? exportMsg.text}>
-            {exportMsg.ok && exportMsg.path ? exportMsg.path : exportMsg.text}
-          </span>
-          {exportMsg.ok && exportMsg.path && (
-            <button
-              style={styles.toastBtn}
-              onClick={() => revealDigest(exportMsg.path!)}
-              title="Reveal in file explorer"
-            >
-              Reveal
-            </button>
-          )}
-          <button style={styles.toastBtn} onClick={() => setExportMsg(null)} title="Dismiss">
-            ✕
-          </button>
-        </div>
-      )}
+      {/* v2.2: NotebookLM setup wizard (2 clicks). */}
+      {nbOpen && <NotebookLmWizard onClose={() => setNbOpen(false)} />}
     </div>
   );
 };
