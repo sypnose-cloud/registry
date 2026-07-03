@@ -2,7 +2,7 @@
 echo === Signing Registry MSIX ===
 echo.
 set SIGNTOOL="C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe"
-set MSIX="C:\Users\carlo\repos\registry\app\src-tauri\target\release\bundle\msix\SypnoseRegistry_0.1.0_x64.msix"
+set MSIX="C:\Users\carlo\repos\registry\app\src-tauri\target\release\bundle\msix\SypnoseRegistry_2.0.0_x64.msix"
 set CERT="D:\CERTIFICADO\RepackagerExpress_renewed.pfx"
 set /p PASS=Certificate password:
 echo Signing...

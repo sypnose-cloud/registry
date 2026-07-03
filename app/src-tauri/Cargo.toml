@@ -1,6 +1,6 @@
 [package]
 name = "sypnose-registry"
-version = "0.1.0"
+version = "2.0.0"
 description = "Interactive code dependency graph visualizer"
 authors = ["Sypnose Cloud"]
 edition = "2021"

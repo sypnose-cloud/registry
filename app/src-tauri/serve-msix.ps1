@@ -10,7 +10,7 @@ while ($listener.IsListening) {
         $resp.AddHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
         $resp.AddHeader('Access-Control-Allow-Headers', '*')
         if ($ctx.Request.HttpMethod -eq 'GET') {
-            $file = 'C:\Users\carlo\repos\registry\app\src-tauri\target\release\bundle\msix\SypnoseRegistry_0.1.0_x64.msix'
+            $file = 'C:\Users\carlo\repos\registry\app\src-tauri\target\release\bundle\msix\SypnoseRegistry_2.0.0_x64.msix'
             $bytes = [System.IO.File]::ReadAllBytes($file)
             $resp.ContentType = 'application/octet-stream'
             $resp.ContentLength64 = $bytes.Length

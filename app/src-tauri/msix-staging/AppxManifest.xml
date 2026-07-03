@@ -7,7 +7,7 @@
   <Identity
     Name="42109FactoriaDatacenter.Registry"
     Publisher="CN=20D5B5BC-82B1-4ABC-A891-8833937F9AF4"
-    Version="0.1.0.0"
+    Version="2.0.0.0"
     ProcessorArchitecture="x64" />
 
   <Properties>

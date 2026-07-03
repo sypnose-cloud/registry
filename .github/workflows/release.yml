@@ -1,0 +1,70 @@
+name: release
+
+# Build the desktop app on a version tag and publish a GitHub Release with the
+# installer(s) + SHA256 checksums.
+#
+# NOTE ON MSIX SIGNING: the MSIX is signed with a self-issued certificate that
+# CANNOT live in this public repo (private key + password). CI therefore builds
+# the unsigned NSIS installer + (optionally) an unsigned MSIX and attaches them.
+# The SIGNED `SypnoseRegistry_<version>_x64.msix` + `SypnoseRegistry.cer` are
+# produced locally with `app/scripts/build-msix.sh` and uploaded to the same
+# Release manually (or attach them to the draft this workflow creates).
+#
+# If you later add an org secret with a base64 PFX + password, gate the signing
+# step behind `${{ secrets.MSIX_PFX_BASE64 != '' }}` — do not inline any secret.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+
+      - name: Install frontend deps
+        working-directory: app
+        run: npm ci
+
+      - name: Tauri build (NSIS + MSI)
+        working-directory: app
+        run: npx tauri build
+
+      - name: Collect artifacts + checksums
+        shell: pwsh
+        working-directory: app/src-tauri/target/release/bundle
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Get-ChildItem -Recurse -Include *.exe,*.msi |
+            Where-Object { $_.FullName -match 'nsis|msi' } |
+            ForEach-Object { Copy-Item $_.FullName dist\ }
+          Get-ChildItem dist | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+            "$h  $($_.Name)" | Out-File -Append -Encoding ascii dist\SHA256SUMS.txt
+          }
+          Get-Content dist\SHA256SUMS.txt
+
+      - name: Publish Release (draft — attach the signed MSIX + .cer before publishing)
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            app/src-tauri/target/release/bundle/dist/*
