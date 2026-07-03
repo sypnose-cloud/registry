@@ -38,7 +38,8 @@ firmados funcionales del 1-jul. Lo que falta es CIERRE DE INGENIERÍA, no featur
 - Botón "Load Demo Graph" con sample-graph.json
 
 ## HALLAZGOS DE SEGURIDAD (antes de pushear a GitHub público)
-1. 🔴 Password de certificado "123456" hardcodeado en scripts/build-msix.sh:12 → PURGAR
+1. 🔴 Password de certificado hardcodeado (valor redactado) en scripts/build-msix.sh:12 → PURGADO
+   el 2026-07-02: el script ahora lo lee de D:\CERTIFICADO\pass.txt o de $CERT_PASS
    (do-sign.ps1 lo hace bien: lee D:/CERTIFICADO/pass.txt)
 2. 🔴 app/ estaba UNTRACKED → asegurado en commit 00b65fa (2026-07-02). Push pendiente de purga.
 3. 🟡 Cert autofirmado: la instalación en Windows limpio exige instalar el .cer en el trust
