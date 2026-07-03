@@ -2,6 +2,7 @@ mod indexer;
 mod ai_bridge;
 mod watcher;
 mod history;
+mod chat;
 
 use std::fs;
 use std::path::PathBuf;
@@ -131,6 +132,28 @@ fn get_changes(path: String, scan_id: i64) -> Result<Vec<history::ChangeEvent>, 
     history::get_changes(&PathBuf::from(path), scan_id)
 }
 
+/// M4: ask Claude a question grounded in the given graph JSON (the graph currently
+/// visible — live or a historical snapshot). Returns the answer text. Errors with
+/// "NO_API_KEY: ..." if the user has not configured their Anthropic key.
+#[tauri::command]
+async fn ask_claude(question: String, graph_json: String) -> Result<String, String> {
+    chat::ask_claude(&question, &graph_json).await
+}
+
+/// M4: store the user's Anthropic API key (Settings UI). Empty string clears it.
+/// The key is written to `~/.registry-app/settings.json` — never to the repo/git.
+#[tauri::command]
+fn set_api_key(key: String) -> Result<(), String> {
+    chat::set_api_key(&key)
+}
+
+/// M4: whether an API key is configured. Returns only { configured, hint } — the
+/// full key is NEVER returned through this command (hint is masked to last 4 chars).
+#[tauri::command]
+fn get_api_key_status() -> Result<chat::ApiKeyStatus, String> {
+    Ok(chat::api_key_status())
+}
+
 /// Start (or restart) the live watcher on `path`. Any previously-active watcher
 /// is torn down first, so opening another folder never leaves an orphan watcher.
 #[tauri::command]
@@ -257,6 +280,9 @@ pub fn run() {
             list_snapshots,
             get_snapshot,
             get_changes,
+            ask_claude,
+            set_api_key,
+            get_api_key_status,
             get_recent_projects,
             save_recent_project,
             open_file_in_os,

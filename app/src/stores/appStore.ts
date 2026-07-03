@@ -51,6 +51,11 @@ interface AppState {
   setFilterOpen: (open: boolean) => void;
   toggleFilter: () => void;
 
+  // M4: chat panel (NotebookLM-style)
+  isChatOpen: boolean;
+  setChatOpen: (open: boolean) => void;
+  toggleChat: () => void;
+
   isIndexing: boolean;
   indexingProgress: { current: number; total: number };
   setIndexing: (indexing: boolean, progress?: { current: number; total: number }) => void;
@@ -139,6 +144,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   isFilterOpen: false,
   setFilterOpen: (open) => set({ isFilterOpen: open }),
   toggleFilter: () => set((s) => ({ isFilterOpen: !s.isFilterOpen })),
+
+  // M4: chat panel
+  isChatOpen: false,
+  setChatOpen: (open) => set({ isChatOpen: open }),
+  toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),
 
   isIndexing: false,
   indexingProgress: { current: 0, total: 0 },

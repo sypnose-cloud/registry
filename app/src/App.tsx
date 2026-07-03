@@ -15,6 +15,7 @@ import { useAppStore } from './stores/appStore';
 import type { UnifiedGraph } from './types/graph';
 import { adaptRawGraph } from './utils/adaptGraph';
 import { TimeSlider } from './components/TimeSlider';
+import { ChatPanel } from './components/ChatPanel';
 import sampleData from './data/sample-graph.json';
 
 function adaptSampleGraph(): UnifiedGraph {
@@ -322,6 +323,7 @@ function App() {
       </div>
       <StatusBar />
       <TimeSlider />
+      <ChatPanel />
       <AiBridgeBadge />
       {selectedNodeId && <NodeDetailPanel />}
       <SearchPalette />

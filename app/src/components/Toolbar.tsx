@@ -21,6 +21,12 @@ const FilterIcon = () => (
   </svg>
 );
 
+const ChatIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M2 3.5A1.5 1.5 0 013.5 2h9A1.5 1.5 0 0114 3.5v6A1.5 1.5 0 0112.5 11H6l-3 3v-3H3.5A1.5 1.5 0 012 9.5v-6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+  </svg>
+);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyStyle = React.CSSProperties & Record<string, any>;
 
@@ -33,7 +39,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   projectName = 'Sypnose Registry',
   onBack,
 }) => {
-  const { toggleSearch, toggleFilter, isFilterOpen } = useAppStore();
+  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen } = useAppStore();
 
   const styles: Record<string, AnyStyle> = {
     toolbar: {
@@ -212,6 +218,30 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           }}
         >
           <FilterIcon />
+        </button>
+
+        {/* M4: Chat toggle */}
+        <button
+          style={{
+            ...styles.iconBtn,
+            ...(isChatOpen ? styles.iconBtnActive : {}),
+          }}
+          onClick={toggleChat}
+          title="Ask Claude about this folder"
+          onMouseEnter={e => {
+            if (!isChatOpen) {
+              (e.currentTarget as HTMLButtonElement).style.background = 'var(--panel-hover)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
+            }
+          }}
+          onMouseLeave={e => {
+            if (!isChatOpen) {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)';
+            }
+          }}
+        >
+          <ChatIcon />
         </button>
 
       </div>
