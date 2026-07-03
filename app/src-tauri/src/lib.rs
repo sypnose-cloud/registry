@@ -250,9 +250,96 @@ fn save_recent_project(path: String, name: String) -> Result<(), String> {
 #[tauri::command]
 async fn open_file_in_os(path: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+
+    // SECURITY: "Open" must be a READ action, never an EXECUTE action. With the
+    // OS default association, double-click semantics RUN .py/.bat/.cmd/.vbs/.js
+    // (and .exe & friends). A user exploring their graph must never execute code
+    // by clicking "Open" on a node.
+    match open_strategy(&path) {
+        OpenStrategy::RevealOnly => {
+            // Executable binaries: opening = running. Show in Explorer instead.
+            return reveal_in_explorer(path).await;
+        }
+        OpenStrategy::TextEditor => {
+            // Scripts are text: open them for READING in an editor.
+            #[cfg(target_os = "windows")]
+            {
+                return std::process::Command::new("notepad.exe")
+                    .arg(&path)
+                    .spawn()
+                    .map(|_| ())
+                    .map_err(|e| e.to_string());
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                // Non-Windows: default association for scripts is an editor.
+            }
+        }
+        OpenStrategy::Default => {}
+    }
+
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+#[derive(PartialEq, Debug)]
+enum OpenStrategy {
+    /// Safe to open with the OS default app (docs, images, most code files).
+    Default,
+    /// Script whose double-click association may EXECUTE it — open in a text editor.
+    TextEditor,
+    /// Executable binary — never open; reveal in Explorer instead.
+    RevealOnly,
+}
+
+#[cfg(test)]
+mod open_strategy_tests {
+    use super::*;
+
+    #[test]
+    fn scripts_open_in_editor_never_execute() {
+        for p in [r"C:\x\run.py", r"C:\x\deploy.BAT", "/x/setup.sh", r"C:\x\a.vbs",
+                  r"C:\x\legacy.js", r"C:\x\task.CMD", r"C:\x\prov.ps1"] {
+            assert_eq!(open_strategy(p), OpenStrategy::TextEditor, "{}", p);
+        }
+    }
+
+    #[test]
+    fn binaries_are_reveal_only() {
+        for p in [r"C:\x\app.exe", r"C:\x\setup.MSI", r"C:\x\tool.jar", r"C:\x\a.lnk"] {
+            assert_eq!(open_strategy(p), OpenStrategy::RevealOnly, "{}", p);
+        }
+    }
+
+    #[test]
+    fn docs_code_and_media_keep_default_open() {
+        for p in [r"C:\x\README.md", r"C:\x\main.rs", r"C:\x\app.tsx", r"C:\x\a.pdf",
+                  r"C:\x\logo.png", r"C:\x\data.json", r"C:\x\noext"] {
+            assert_eq!(open_strategy(p), OpenStrategy::Default, "{}", p);
+        }
+    }
+}
+
+/// Pure classification so it can be unit-tested. Case-insensitive on extension.
+fn open_strategy(path: &str) -> OpenStrategy {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        // Binaries: double-click = run. Reveal only.
+        "exe" | "com" | "scr" | "msi" | "msix" | "jar" | "lnk" | "application" => {
+            OpenStrategy::RevealOnly
+        }
+        // Scripts: text files whose default association may execute them
+        // (.py → python, .bat/.cmd → cmd, .vbs/.js/.wsf → Windows Script Host,
+        //  .ps1 is editor-by-default but keep it consistent: read, don't risk).
+        "py" | "pyw" | "bat" | "cmd" | "ps1" | "psm1" | "vbs" | "vbe" | "js"
+        | "jse" | "wsf" | "wsh" | "sh" => OpenStrategy::TextEditor,
+        _ => OpenStrategy::Default,
+    }
 }
 
 #[tauri::command]
