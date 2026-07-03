@@ -309,6 +309,13 @@ pub async fn ask_claude(question: &str, graph_json: &str) -> Result<String, Stri
 mod tests {
     use super::*;
 
+    /// The two key-mutating tests below share REAL state (the settings.json in
+    /// the user home). Cargo runs tests in parallel, so without serialization
+    /// they race (one test's fake key leaks into the other's no-key assertion).
+    /// This lock makes them mutually exclusive — fixes a flaky failure first
+    /// observed when unrelated tests shifted the scheduling (2026-07-02).
+    static SETTINGS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     const SAMPLE_GRAPH: &str = r#"{
         "nodes":[
             {"id":"file:src/main.rs","label":"main.rs","type":"file","language":"rust","lines":120},
@@ -350,6 +357,7 @@ mod tests {
     /// error (never panics, never hits the network). We enforce an empty key first.
     #[tokio::test]
     async fn no_key_returns_friendly_error_not_crash() {
+        let _guard = SETTINGS_LOCK.lock().unwrap();
         // Force key empty for this test (does not touch a real user's key on CI:
         // the test home may differ; we just assert the empty-key branch).
         let saved = load_settings().anthropic_api_key;
@@ -371,6 +379,7 @@ mod tests {
     /// not a credential.
     #[test]
     fn api_key_status_never_leaks_full_key() {
+        let _guard = SETTINGS_LOCK.lock().unwrap();
         let saved = load_settings().anthropic_api_key;
 
         let fake_prefix = "fake-key-"; // deliberately NOT the real prefix

@@ -88,6 +88,9 @@ impl AiBridge {
                                 {"method": "GET", "path": "/search?q=term", "description": "Search nodes by label or path"},
                                 {"method": "GET", "path": "/node/:id", "description": "Single node detail with connections"},
                                 {"method": "GET", "path": "/architecture", "description": "Project architecture summary"},
+                                {"method": "GET", "path": "/timeline", "description": "Temporal memory (M3): all recorded scans with timestamps and change counts"},
+                                {"method": "GET", "path": "/changes/:scan_id", "description": "Change events of one scan (added/modified/removed entities)"},
+                                {"method": "GET", "path": "/snapshot/:scan_id", "description": "Full graph JSON exactly as it was at that scan"},
                                 {"method": "POST", "path": "/highlight", "description": "Highlight a node in the UI (body: {node_id, color?, label?})"},
                                 {"method": "GET", "path": "/highlights", "description": "Current highlights"},
                                 {"method": "POST", "path": "/clear-highlights", "description": "Clear all highlights"},
@@ -275,6 +278,65 @@ impl AiBridge {
                                 }
                             }
                             None => (404, r#"{"error":"No project loaded"}"#.to_string()),
+                        }
+                    }
+
+                    // ---- Temporal memory (M3) exposed to external AIs (v2.1) ----
+                    // The timeline lives in graphify-out/history.db of the OPEN
+                    // project; we resolve it from SharedGraph.project_path so any
+                    // AI can ask "what changed and when" without touching files.
+
+                    ("GET", "/timeline") => {
+                        let g = graph.lock().unwrap();
+                        match g.as_ref() {
+                            Some(sg) if !sg.project_path.is_empty() => {
+                                let root = std::path::PathBuf::from(&sg.project_path);
+                                match crate::history::list_scans(&root) {
+                                    Ok(scans) => (200, serde_json::to_string(&scans)
+                                        .unwrap_or("[]".to_string())),
+                                    Err(e) => (500, serde_json::json!({
+                                        "error": format!("history unavailable: {}", e)
+                                    }).to_string()),
+                                }
+                            }
+                            _ => (404, r#"{"error":"No project loaded"}"#.to_string()),
+                        }
+                    }
+
+                    ("GET", path) if path.starts_with("/changes/") => {
+                        let id_str = urldecode(&path[9..]);
+                        let g = graph.lock().unwrap();
+                        match (g.as_ref(), id_str.parse::<i64>()) {
+                            (Some(sg), Ok(scan_id)) if !sg.project_path.is_empty() => {
+                                let root = std::path::PathBuf::from(&sg.project_path);
+                                match crate::history::get_changes(&root, scan_id) {
+                                    Ok(events) => (200, serde_json::to_string(&events)
+                                        .unwrap_or("[]".to_string())),
+                                    Err(e) => (500, serde_json::json!({
+                                        "error": format!("history unavailable: {}", e)
+                                    }).to_string()),
+                                }
+                            }
+                            (_, Err(_)) => (400, r#"{"error":"scan_id must be a number"}"#.to_string()),
+                            _ => (404, r#"{"error":"No project loaded"}"#.to_string()),
+                        }
+                    }
+
+                    ("GET", path) if path.starts_with("/snapshot/") => {
+                        let id_str = urldecode(&path[10..]);
+                        let g = graph.lock().unwrap();
+                        match (g.as_ref(), id_str.parse::<i64>()) {
+                            (Some(sg), Ok(scan_id)) if !sg.project_path.is_empty() => {
+                                let root = std::path::PathBuf::from(&sg.project_path);
+                                match crate::history::get_snapshot(&root, scan_id) {
+                                    Ok(json) => (200, json),
+                                    Err(e) => (404, serde_json::json!({
+                                        "error": format!("snapshot not found: {}", e)
+                                    }).to_string()),
+                                }
+                            }
+                            (_, Err(_)) => (400, r#"{"error":"scan_id must be a number"}"#.to_string()),
+                            _ => (404, r#"{"error":"No project loaded"}"#.to_string()),
                         }
                     }
 

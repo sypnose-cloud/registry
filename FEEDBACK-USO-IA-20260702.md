@@ -18,8 +18,12 @@ segundos es real; para el diagnóstico hubo que volver a Glob/Read a ciegas.
 3. **Solo edges "contains"**: cero dependencias (quién usa qué) → inútil para "¿quién
    llama a CreateInstance?".
 4. **Sin frescura**: graph.json del 26-jun sin timestamp visible ni aviso de staleness.
-5. **Sin acceso programático**: la IA tuvo que ENCONTRAR el graph.json en el filesystem.
-   No hay endpoint/MCP de consulta (el AI Bridge :44444 aún no sirve el grafo).
+5. **Sin acceso programático DESCUBRIBLE**: la IA tuvo que ENCONTRAR el graph.json en
+   el filesystem. CORRECCIÓN (2026-07-02, tras leer ai_bridge.rs): el AI Bridge :44444
+   SÍ servía ya /graph, /search, /node/:id, /architecture y /highlight — el gap real
+   era (a) documentación/descubribilidad (ninguna IA sabe que existe sin leerse el
+   código Rust) y (b) la memoria temporal de M3 no estaba expuesta. Ambos resueltos
+   en v2.1: docs/AI-BRIDGE.md + endpoints /timeline, /changes/:id, /snapshot/:id.
 
 ## MEJORAS QUE ESTE TEST VALIDA (para el backlog, orden de impacto)
 1. **Parser C#/.NET en indexer.rs** (NUEVA — no estaba en ningún plan) — clases, métodos,
