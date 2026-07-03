@@ -3,6 +3,7 @@ mod ai_bridge;
 mod watcher;
 mod history;
 mod chat;
+mod export;
 
 use std::fs;
 use std::path::PathBuf;
@@ -154,6 +155,44 @@ fn get_api_key_status() -> Result<chat::ApiKeyStatus, String> {
     Ok(chat::api_key_status())
 }
 
+/// M5: export a Markdown digest of the currently-visible graph (structure, dated
+/// recent changes, hub files) to a folder Carlos syncs with Google Drive. Returns
+/// the absolute path of the written .md. `dest_dir` is optional: if omitted, the
+/// saved digest folder is used, else the default `~/RegistryDigests/`.
+#[tauri::command]
+fn export_digest(path: String, graph_json: String, dest_dir: Option<String>) -> Result<String, String> {
+    export::write_digest(&path, &graph_json, dest_dir)
+}
+
+/// M5: open a folder picker so the user chooses (once) their Drive-synced digest
+/// folder. Persists and returns the chosen path (None if the dialog was cancelled).
+#[tauri::command]
+async fn pick_digest_dir() -> Result<Option<String>, String> {
+    let folder = rfd::AsyncFileDialog::new().pick_folder().await;
+    match folder {
+        Some(f) => {
+            let dir = f.path().to_string_lossy().to_string();
+            chat::set_digest_dir(&dir)?;
+            Ok(Some(dir))
+        }
+        None => Ok(None),
+    }
+}
+
+/// M5: the currently-saved digest destination folder ("" if never chosen).
+#[tauri::command]
+fn get_digest_dir() -> Result<String, String> {
+    Ok(chat::get_digest_dir())
+}
+
+/// M5 (Vía B, EXPERIMENTAL): report whether the optional `notebooklm-py` CLI is
+/// installed. Never uploads — the supported path is Vía A (Drive-synced folder).
+/// Uses UNOFFICIAL Google APIs; kept opt-in and off by default.
+#[tauri::command]
+fn notebooklm_status() -> Result<export::NotebookLmStatus, String> {
+    Ok(export::notebooklm_status())
+}
+
 /// Start (or restart) the live watcher on `path`. Any previously-active watcher
 /// is torn down first, so opening another folder never leaves an orphan watcher.
 #[tauri::command]
@@ -283,6 +322,10 @@ pub fn run() {
             ask_claude,
             set_api_key,
             get_api_key_status,
+            export_digest,
+            pick_digest_dir,
+            get_digest_dir,
+            notebooklm_status,
             get_recent_projects,
             save_recent_project,
             open_file_in_os,

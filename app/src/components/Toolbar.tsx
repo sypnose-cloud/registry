@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { useAppStore } from '../stores/appStore';
 
 // SVG Icons inline
@@ -27,6 +27,14 @@ const ChatIcon = () => (
   </svg>
 );
 
+// M5: Export digest icon (document with down-arrow).
+const ExportIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M4 2h5l3 3v9H4V2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+    <path d="M8 6.5v4M6.5 9l1.5 1.5L9.5 9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyStyle = React.CSSProperties & Record<string, any>;
 
@@ -39,7 +47,38 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   projectName = 'Sypnose Registry',
   onBack,
 }) => {
-  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen } = useAppStore();
+  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen, graph, projectPath } = useAppStore();
+
+  // M5: one-shot export state (no persistent panel — transient feedback only).
+  const [exporting, setExporting] = useState(false);
+  const [exportMsg, setExportMsg] = useState<{ ok: boolean; text: string; path?: string } | null>(null);
+
+  const handleExport = useCallback(async () => {
+    if (exporting || !graph) return;
+    setExporting(true);
+    setExportMsg(null);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      // Send the currently-visible graph (live or historical snapshot), same as chat.
+      const graphJson = JSON.stringify(graph);
+      const path = projectPath ?? graph.projectPath ?? '';
+      const written = await invoke<string>('export_digest', { path, graphJson });
+      setExportMsg({ ok: true, text: 'Digest exported', path: written });
+    } catch (err) {
+      setExportMsg({ ok: false, text: `Export failed: ${String(err)}` });
+    } finally {
+      setExporting(false);
+    }
+  }, [exporting, graph, projectPath]);
+
+  const revealDigest = useCallback(async (p: string) => {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('reveal_in_explorer', { path: p });
+    } catch {
+      /* best-effort; ignore */
+    }
+  }, []);
 
   const styles: Record<string, AnyStyle> = {
     toolbar: {
@@ -141,6 +180,43 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       height: 20,
       background: 'var(--border)',
       margin: '0 4px',
+    },
+    // M5: export result toast, anchored below the toolbar on the right.
+    toast: {
+      position: 'fixed',
+      top: 54,
+      right: 12,
+      maxWidth: 480,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      padding: '8px 10px',
+      borderRadius: 'var(--radius-sm)',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+      fontSize: 12,
+      color: 'var(--text)',
+      zIndex: 300,
+      WebkitAppRegion: 'no-drag',
+    },
+    toastText: {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      maxWidth: 340,
+      fontFamily: 'var(--font-mono, monospace)',
+      color: 'var(--text-muted)',
+    },
+    toastBtn: {
+      border: '1px solid var(--border)',
+      background: 'var(--bg)',
+      color: 'var(--text-muted)',
+      borderRadius: 'var(--radius-sm)',
+      padding: '2px 6px',
+      fontSize: 11,
+      cursor: 'pointer',
+      flexShrink: 0,
     },
   };
 
@@ -244,7 +320,58 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <ChatIcon />
         </button>
 
+        {/* M5: Export digest (one-shot). Disabled when no graph is loaded. */}
+        <button
+          style={{
+            ...styles.iconBtn,
+            ...(exporting ? styles.iconBtnActive : {}),
+            opacity: graph ? 1 : 0.4,
+            cursor: graph ? 'pointer' : 'default',
+          }}
+          onClick={handleExport}
+          disabled={!graph || exporting}
+          title={graph ? 'Export digest (Markdown for NotebookLM / Drive)' : 'Load a folder first'}
+          onMouseEnter={e => {
+            if (graph && !exporting) {
+              (e.currentTarget as HTMLButtonElement).style.background = 'var(--panel-hover)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
+            }
+          }}
+          onMouseLeave={e => {
+            if (!exporting) {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)';
+            }
+          }}
+        >
+          <ExportIcon />
+        </button>
+
       </div>
+
+      {/* M5: transient export result toast (path + reveal), auto-shown after export. */}
+      {exportMsg && (
+        <div style={styles.toast}>
+          <span style={{ color: exportMsg.ok ? 'var(--accent)' : 'var(--danger, #e5484d)' }}>
+            {exportMsg.ok ? '✓' : '✕'}
+          </span>
+          <span style={styles.toastText} title={exportMsg.path ?? exportMsg.text}>
+            {exportMsg.ok && exportMsg.path ? exportMsg.path : exportMsg.text}
+          </span>
+          {exportMsg.ok && exportMsg.path && (
+            <button
+              style={styles.toastBtn}
+              onClick={() => revealDigest(exportMsg.path!)}
+              title="Reveal in file explorer"
+            >
+              Reveal
+            </button>
+          )}
+          <button style={styles.toastBtn} onClick={() => setExportMsg(null)} title="Dismiss">
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 };

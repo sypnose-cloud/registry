@@ -40,6 +40,10 @@ struct Settings {
     /// Anthropic API key. Stored ONLY here (user home), never in code or repo.
     #[serde(default)]
     anthropic_api_key: String,
+    /// M5: chosen destination folder for exported digests (a Drive-synced folder).
+    /// `#[serde(default)]` keeps old settings files (which lack this key) readable.
+    #[serde(default)]
+    digest_dir: String,
 }
 
 fn load_settings() -> Settings {
@@ -91,6 +95,23 @@ pub fn api_key_status() -> ApiKeyStatus {
 pub struct ApiKeyStatus {
     pub configured: bool,
     pub hint: String,
+}
+
+// ─────────────────────────────────────────────────────────────
+// M5: digest destination folder — shares the same settings.json so it
+// never clobbers the API key (single owner of the file).
+// ─────────────────────────────────────────────────────────────
+
+/// The currently-saved digest destination folder ("" if never chosen).
+pub fn get_digest_dir() -> String {
+    load_settings().digest_dir.trim().to_string()
+}
+
+/// Persist the digest destination folder (from the M5 export flow). Empty clears it.
+pub fn set_digest_dir(dir: &str) -> Result<(), String> {
+    let mut s = load_settings();
+    s.digest_dir = dir.trim().to_string();
+    save_settings(&s)
 }
 
 // ─────────────────────────────────────────────────────────────
