@@ -39,12 +39,14 @@ ONLY="${1:-}"
 run_one() {
   local name="$1" wpath="$2"
   local upath; upath=$(cygpath -u "$wpath")
-  # Skips documentados (trampas 67):
+  # Skips documentados (trampas 67). find en vez de ls+globs: ls devuelve error
+  # si CUALQUIER patrón no matchea y provocaba SKIPs en falso.
   if [ ! -d "$upath" ]; then log "SKIP $name: ruta no existe ($wpath)"; return 2; fi
-  if ls "$upath"/*.cpp "$upath"/**/*.cpp >/dev/null 2>&1; then log "SKIP $name: C++ no soportado"; return 2; fi
-  if ! ls "$upath"/*.{js,ts,tsx,py,rs,go,java,php,cs} "$upath"/*/*.{js,ts,tsx,py,rs,go,java,php,cs} >/dev/null 2>&1; then
-    log "SKIP $name: sin código fuente detectable (repo-ancla)"; return 2
-  fi
+  local srcs cpps
+  srcs=$(find "$upath" -maxdepth 3 -type d \( -name node_modules -o -name .git -o -name target -o -name dist \) -prune -o -type f \( -name '*.js' -o -name '*.ts' -o -name '*.tsx' -o -name '*.py' -o -name '*.rs' -o -name '*.go' -o -name '*.java' -o -name '*.php' -o -name '*.cs' \) -print 2>/dev/null | head -1)
+  cpps=$(find "$upath" -maxdepth 3 -type d \( -name node_modules -o -name .git \) -prune -o -type f \( -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' \) -print 2>/dev/null | head -1)
+  if [ -n "$cpps" ] && [ -z "$srcs" ]; then log "SKIP $name: C++ no soportado"; return 2; fi
+  if [ -z "$srcs" ]; then log "SKIP $name: sin código fuente detectable (repo-ancla)"; return 2; fi
   if [ -f "$upath/.codeboarding/analysis.json" ]; then log "OK $name: ya tenía analysis.json"; return 0; fi
 
   log "GEN $name: arrancando codeboarding --local $wpath (timeout ${TIMEOUT_S}s)"
@@ -73,6 +75,7 @@ run_one() {
 }
 
 for entry in "${ENTRIES[@]}"; do
+  entry="${entry//$'\r'/}"   # Python en Windows emite \r\n; mapfile solo quita \n — sin esto la ruta viaja con \r y CodeBoarding revienta (WinError 123)
   name="${entry%%|*}"; wpath="${entry#*|}"
   [ -n "$ONLY" ] && [ "$name" != "$ONLY" ] && continue
   run_one "$name" "$wpath"
