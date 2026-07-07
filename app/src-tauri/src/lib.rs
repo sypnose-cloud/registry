@@ -5,6 +5,7 @@ mod history;
 mod chat;
 mod export;
 mod open_notebook;
+mod architecture;
 
 use std::fs;
 use std::path::PathBuf;
@@ -112,6 +113,10 @@ fn index_project(path: String, bridge: tauri::State<'_, Arc<ai_bridge::AiBridge>
     if let Err(e) = history::record_index(&root, &json, &path) {
         eprintln!("[history] snapshot skipped for {}: {}", path, e);
     }
+
+    // M8: generate static architecture.json if it does not already exist.
+    // Best-effort — never breaks index if it fails.
+    architecture::maybe_generate_static(&root, &json);
 
     Ok(json)
 }
@@ -412,6 +417,45 @@ fn open_strategy(path: &str) -> OpenStrategy {
     }
 }
 
+// ─────────────────────────────────────────────────────────────
+// M8: Architecture commands (contract v1)
+// ─────────────────────────────────────────────────────────────
+
+/// Return the content of `<path>/graphify-out/architecture.json`, or null if it
+/// does not exist yet. The React layer reads this to render the Architecture view.
+#[tauri::command]
+fn get_architecture(path: String) -> Result<Option<String>, String> {
+    let arch_path = PathBuf::from(&path)
+        .join("graphify-out")
+        .join("architecture.json");
+    if !arch_path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&arch_path)
+        .map_err(|e| format!("Cannot read architecture.json: {}", e))?;
+    Ok(Some(content))
+}
+
+/// Build the STATIC architecture (no LLM) for `path`, persist it, and return
+/// the JSON string. `graphJson` is the currently-indexed graph from the frontend.
+#[tauri::command]
+fn build_static_architecture(path: String, graph_json: String) -> Result<String, String> {
+    let root = PathBuf::from(&path);
+    let arch = architecture::build_static(Some(&root), &graph_json)?;
+    architecture::persist(&root, &arch)?;
+    serde_json::to_string(&arch).map_err(|e| format!("Cannot serialise architecture: {}", e))
+}
+
+/// Enrich the architecture using the configured LLM (same settings as `ask_claude`).
+/// Returns `Err("NO_API_KEY: …")` when no key/proxy is configured — same contract as chat.
+#[tauri::command]
+async fn enrich_architecture(path: String, graph_json: String) -> Result<String, String> {
+    let root = PathBuf::from(&path);
+    let arch: architecture::Architecture = architecture::enrich(Some(&root), &graph_json).await?;
+    architecture::persist(&root, &arch)?;
+    serde_json::to_string(&arch).map_err(|e| format!("Cannot serialise architecture: {}", e))
+}
+
 #[tauri::command]
 fn get_ai_status(bridge: tauri::State<'_, Arc<ai_bridge::AiBridge>>) -> Result<serde_json::Value, String> {
     let connected = bridge.is_ai_connected();
@@ -494,7 +538,10 @@ pub fn run() {
             open_file_in_os,
             reveal_in_explorer,
             get_ai_status,
-            get_ai_highlights
+            get_ai_highlights,
+            get_architecture,
+            build_static_architecture,
+            enrich_architecture
         ])
         .setup(|_app| {
             Ok(())

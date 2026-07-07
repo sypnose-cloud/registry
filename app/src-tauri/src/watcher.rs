@@ -134,6 +134,9 @@ impl WatcherState {
                                                 "[watcher] snapshot skipped: {}", e
                                             )),
                                         }
+                                        // M8: generate static architecture.json if absent.
+                                        // Best-effort — never breaks watcher on failure.
+                                        crate::architecture::maybe_generate_static(&watch_root, &json);
                                         if let Err(e) = app_for_handler.emit(GRAPH_UPDATED_EVENT, json) {
                                             log_line(&format!("[watcher] emit failed: {}", e));
                                         }
