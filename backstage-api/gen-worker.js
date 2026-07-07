@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { spawn } from 'child_process';
+import { deriveRelations } from './relations-fallback.js';
 
 const HOME = os.homedir();
 const DATA_DIR = process.env.REGISTRY_DATA || path.join(HOME, '.registry-data');
@@ -90,6 +91,11 @@ function generateOne(p) {
       clearTimeout(timer);
       const ok = code === 0 && fs.existsSync(path.join(p.path, '.codeboarding', 'analysis.json'));
       log(ok ? `OK ${p.name}: analysis.json generado` : `FALLO ${p.name}: rc=${code}`);
+      if (ok) {
+        // Hook: fallback de relaciones — best-effort, nunca bloquea el ciclo
+        const aPath = path.join(p.path, '.codeboarding', 'analysis.json');
+        deriveRelations(aPath, p.path).catch((e) => log(`[relations-fallback] ${p.name}: ${e.message}`));
+      }
       resolve(ok);
     });
     child.on('error', (e) => { clearTimeout(timer); log(`FALLO ${p.name}: ${e.message}`); resolve(false); });
