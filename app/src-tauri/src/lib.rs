@@ -4,6 +4,7 @@ mod watcher;
 mod history;
 mod chat;
 mod export;
+mod open_notebook;
 
 use std::fs;
 use std::path::PathBuf;
@@ -165,13 +166,56 @@ fn export_digest(path: String, graph_json: String, dest_dir: Option<String>) -> 
 }
 
 /// v2.2 wizard: everything the NotebookLM setup screen needs, in one call.
+/// v2.4 extends it with the Open Notebook (Vía C) connection state.
 #[tauri::command]
 fn nb_get_state() -> Result<serde_json::Value, String> {
+    let on = chat::get_open_notebook();
     Ok(serde_json::json!({
         "drive_detected": export::detect_drive_dir(),
         "digest_dir": chat::get_digest_dir(),
         "connected": chat::get_nb_connected(),
+        "on_url": on.url,
+        "on_notebook_id": on.notebook_id,
+        "on_connected": on.connected,
+        "on_default_url": open_notebook::DEFAULT_URL,
     }))
+}
+
+/// v2.4 (Vía C): list the notebooks of an Open Notebook instance. Doubles as the
+/// reachability probe for the wizard. Errors start with "ON_UNREACHABLE:" when
+/// nothing answers at `url`, so the UI can show a friendly install hint.
+#[tauri::command]
+async fn on_list_notebooks(url: String) -> Result<Vec<open_notebook::NotebookInfo>, String> {
+    open_notebook::list_notebooks(&url).await
+}
+
+/// v2.4 (Vía C): connect — push the current digest into the chosen notebook and
+/// persist the connection (url + notebook + completed flag). Returns the source id.
+#[tauri::command]
+async fn on_connect(
+    url: String,
+    notebook_id: String,
+    path: String,
+    graph_json: String,
+) -> Result<String, String> {
+    let (name, md) = export::digest_markdown(&path, &graph_json);
+    let title = format!("Registry digest — {}", name);
+    let source_id = open_notebook::push_source(&url, &notebook_id, &title, &md).await?;
+    chat::set_open_notebook(&url, &notebook_id, true)?;
+    Ok(source_id)
+}
+
+/// v2.4 (Vía C): re-push the digest to the already-connected notebook
+/// ("Update now" from the wizard's done screen).
+#[tauri::command]
+async fn on_push(path: String, graph_json: String) -> Result<String, String> {
+    let on = chat::get_open_notebook();
+    if !on.connected || on.url.is_empty() || on.notebook_id.is_empty() {
+        return Err("ON_NOT_CONFIGURED: connect to Open Notebook first.".to_string());
+    }
+    let (name, md) = export::digest_markdown(&path, &graph_json);
+    let title = format!("Registry digest — {}", name);
+    open_notebook::push_source(&on.url, &on.notebook_id, &title, &md).await
 }
 
 /// v2.2 wizard: persist that the user completed the one-time NotebookLM setup.
@@ -440,6 +484,9 @@ pub fn run() {
             nb_get_state,
             nb_set_connected,
             open_notebooklm,
+            on_list_notebooks,
+            on_connect,
+            on_push,
             get_digest_dir,
             notebooklm_status,
             get_recent_projects,

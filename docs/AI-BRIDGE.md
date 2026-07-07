@@ -32,7 +32,7 @@ curl http://127.0.0.1:44444/timeline      # temporal memory: every recorded scan
 | GET | `/timeline` | **Temporal memory**: all recorded scans (id, timestamp, added/modified/removed counts) |
 | GET | `/changes/:scan_id` | The change events of one scan — *what exactly changed* |
 | GET | `/snapshot/:scan_id` | The full graph **as it was** at that scan (time travel) |
-| POST | `/highlight` | Highlight a node in the UI. Body: `{"node_id":"file:src/main.rs","color":"#ff6b00","label":"look here"}` |
+| POST | `/highlight` | Highlight a node in the UI — it lights up on the graph within ~1.5s (your color, or amber) with its label forced visible. Body: `{"node_id":"file:src/main.rs","color":"#ff6b00","label":"look here"}` |
 | GET | `/highlights` | Current highlights |
 | POST | `/clear-highlights` | Clear them |
 

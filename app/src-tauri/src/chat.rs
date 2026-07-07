@@ -48,6 +48,36 @@ struct Settings {
     /// as a source in their notebook). Drives the wizard-vs-synced button state.
     #[serde(default)]
     nb_connected: bool,
+    /// v2.3: optional Anthropic-compatible base URL (e.g. a local proxy like
+    /// CLIProxy on http://127.0.0.1:8318). Empty = api.anthropic.com. When set,
+    /// the API key becomes optional — local proxies authenticate on their own.
+    #[serde(default)]
+    api_base_url: String,
+    /// v2.3: optional model override. Empty = ANTHROPIC_MODEL. Needed because
+    /// proxies expose their own model list (e.g. subscription-tier ids).
+    #[serde(default)]
+    chat_model: String,
+    /// v2.4 (Vía C): base URL of the user's Open Notebook instance
+    /// (e.g. http://127.0.0.1:5055). Empty = not configured.
+    #[serde(default)]
+    on_url: String,
+    /// v2.4: id of the Open Notebook notebook that receives the digest.
+    #[serde(default)]
+    on_notebook_id: String,
+    /// v2.4: the user completed the Open Notebook connection.
+    #[serde(default)]
+    on_connected: bool,
+    /// v2.4: id of the last digest source pushed, so a re-push can delete the
+    /// stale one first (Open Notebook has no stable-file identity like Drive).
+    #[serde(default)]
+    on_last_source_id: String,
+}
+
+/// Parse a settings file body. Strips a UTF-8 BOM first: editors and shells on
+/// Windows (Notepad, PowerShell `Set-Content -Encoding utf8`) prepend one, and
+/// serde_json rejects it — which would silently reset ALL settings to defaults.
+fn parse_settings(raw: &str) -> Settings {
+    serde_json::from_str(raw.trim_start_matches('\u{feff}')).unwrap_or_default()
 }
 
 fn load_settings() -> Settings {
@@ -56,7 +86,7 @@ fn load_settings() -> Settings {
         Err(_) => return Settings::default(),
     };
     match fs::read_to_string(&path) {
-        Ok(c) => serde_json::from_str(&c).unwrap_or_default(),
+        Ok(c) => parse_settings(&c),
         Err(_) => Settings::default(),
     }
 }
@@ -84,8 +114,11 @@ pub fn set_api_key(key: &str) -> Result<(), String> {
 pub fn api_key_status() -> ApiKeyStatus {
     let s = load_settings();
     let key = s.anthropic_api_key.trim();
+    // v2.3: a custom base URL (local proxy) makes chat usable WITHOUT a key,
+    // so the UI must not show the "no key" gate in that case.
+    let custom_base = !s.api_base_url.trim().is_empty();
     ApiKeyStatus {
-        configured: !key.is_empty(),
+        configured: !key.is_empty() || custom_base,
         // Masked hint: last 4 chars only, for the user to confirm which key.
         hint: if key.len() >= 4 {
             format!("…{}", &key[key.len() - 4..])
@@ -127,6 +160,49 @@ pub fn get_nb_connected() -> bool {
 pub fn set_nb_connected(connected: bool) -> Result<(), String> {
     let mut s = load_settings();
     s.nb_connected = connected;
+    save_settings(&s)
+}
+
+// ─────────────────────────────────────────────────────────────
+// v2.4 (Vía C): Open Notebook connection — same settings.json,
+// same single-owner rule so it never clobbers the other fields.
+// ─────────────────────────────────────────────────────────────
+
+/// Snapshot of the Open Notebook connection settings for the wizard/commands.
+#[derive(Serialize)]
+pub struct OpenNotebookState {
+    pub url: String,
+    pub notebook_id: String,
+    pub connected: bool,
+}
+
+pub fn get_open_notebook() -> OpenNotebookState {
+    let s = load_settings();
+    OpenNotebookState {
+        url: s.on_url.trim().to_string(),
+        notebook_id: s.on_notebook_id.trim().to_string(),
+        connected: s.on_connected,
+    }
+}
+
+/// Persist the Open Notebook connection (URL + target notebook + completed flag).
+pub fn set_open_notebook(url: &str, notebook_id: &str, connected: bool) -> Result<(), String> {
+    let mut s = load_settings();
+    s.on_url = url.trim().trim_end_matches('/').to_string();
+    s.on_notebook_id = notebook_id.trim().to_string();
+    s.on_connected = connected;
+    save_settings(&s)
+}
+
+/// Id of the last digest source pushed to Open Notebook ("" if none).
+pub fn get_on_last_source_id() -> String {
+    load_settings().on_last_source_id.trim().to_string()
+}
+
+/// Remember the source id just pushed so the NEXT push can delete the stale one.
+pub fn set_on_last_source_id(id: &str) -> Result<(), String> {
+    let mut s = load_settings();
+    s.on_last_source_id = id.trim().to_string();
     save_settings(&s)
 }
 
@@ -260,26 +336,43 @@ struct AnthropicRequest<'a> {
 pub async fn ask_claude(question: &str, graph_json: &str) -> Result<String, String> {
     let settings = load_settings();
     let key = settings.anthropic_api_key.trim().to_string();
-    if key.is_empty() {
+    let base = settings.api_base_url.trim().trim_end_matches('/').to_string();
+    let custom_base = !base.is_empty();
+    // A key is only mandatory against the real Anthropic endpoint; custom bases
+    // (local proxies) handle auth themselves, so an empty key is valid there.
+    if key.is_empty() && !custom_base {
         return Err("NO_API_KEY: Configure your Anthropic API key in Settings to use chat.".to_string());
     }
+
+    let url = if custom_base {
+        format!("{}/v1/messages", base)
+    } else {
+        ANTHROPIC_URL.to_string()
+    };
+    let model = match settings.chat_model.trim() {
+        "" => ANTHROPIC_MODEL.to_string(),
+        m => m.to_string(),
+    };
 
     let context = build_graph_context(graph_json);
     let sys = system_prompt(&context);
 
     let body = AnthropicRequest {
-        model: ANTHROPIC_MODEL,
+        model: &model,
         max_tokens: MAX_TOKENS,
         system: sys,
         messages: vec![AnthropicMessage { role: "user", content: question }],
     };
 
     let client = reqwest::Client::new();
-    let resp = client
-        .post(ANTHROPIC_URL)
-        .header("x-api-key", &key)
+    let mut req = client
+        .post(&url)
         .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+    if !key.is_empty() {
+        req = req.header("x-api-key", &key);
+    }
+    let resp = req
         .json(&body)
         .send()
         .await
@@ -374,10 +467,13 @@ mod tests {
     #[tokio::test]
     async fn no_key_returns_friendly_error_not_crash() {
         let _guard = SETTINGS_LOCK.lock().unwrap();
-        // Force key empty for this test (does not touch a real user's key on CI:
-        // the test home may differ; we just assert the empty-key branch).
-        let saved = load_settings().anthropic_api_key;
-        let _ = set_api_key(""); // clear
+        // Force key AND base URL empty for this test: the NO_API_KEY gate only
+        // applies to the default endpoint (a custom base allows keyless proxies).
+        let saved = load_settings();
+        let mut s = load_settings();
+        s.anthropic_api_key = String::new();
+        s.api_base_url = String::new();
+        let _ = save_settings(&s);
 
         let res = ask_claude("what is here?", SAMPLE_GRAPH).await;
         assert!(res.is_err(), "no key must yield Err, not Ok");
@@ -385,8 +481,32 @@ mod tests {
         assert!(msg.starts_with("NO_API_KEY"), "must be the NO_API_KEY sentinel, got: {}", msg);
 
         // Restore whatever was there (best-effort; empty if none).
-        let _ = set_api_key(&saved);
+        let _ = save_settings(&saved);
         eprintln!("NO-KEY: PASS — clean NO_API_KEY error, no crash, no network");
+    }
+
+    /// v2.3: with a custom base URL (local proxy), an EMPTY key must bypass the
+    /// NO_API_KEY gate. We point at an unroutable localhost port so the request
+    /// fails fast at connect — proving we got past the gate without a key.
+    #[tokio::test]
+    async fn keyless_custom_base_url_bypasses_no_api_key_gate() {
+        let _guard = SETTINGS_LOCK.lock().unwrap();
+        let saved = load_settings();
+        let mut s = load_settings();
+        s.anthropic_api_key = String::new();
+        s.api_base_url = "http://127.0.0.1:1".to_string(); // nothing listens here
+        let _ = save_settings(&s);
+
+        let res = ask_claude("what is here?", SAMPLE_GRAPH).await;
+        let msg = res.unwrap_err();
+        assert!(
+            !msg.starts_with("NO_API_KEY"),
+            "custom base + empty key must NOT hit the NO_API_KEY gate, got: {}",
+            msg
+        );
+
+        let _ = save_settings(&saved);
+        eprintln!("PROXY-BASE: PASS — keyless custom base URL reaches the network layer");
     }
 
     /// api_key_status never leaks the key: only a bool + masked hint.
@@ -409,6 +529,35 @@ mod tests {
 
         let _ = set_api_key(&saved); // restore
         eprintln!("KEY-MASK: PASS — status exposes only bool + …TAIL, never the full key");
+    }
+
+    /// v2.3: a UTF-8 BOM in settings.json must not wipe the settings. This is
+    /// exactly what Notepad / PowerShell `-Encoding utf8` produce on Windows.
+    #[test]
+    fn settings_parse_tolerates_utf8_bom() {
+        let raw = "\u{feff}{\"anthropic_api_key\":\"k\",\"api_base_url\":\"http://127.0.0.1:8318\"}";
+        let s = parse_settings(raw);
+        assert_eq!(s.anthropic_api_key, "k", "BOM must not reset the key");
+        assert_eq!(s.api_base_url, "http://127.0.0.1:8318", "BOM must not reset the base URL");
+        eprintln!("BOM: PASS — settings survive a UTF-8 BOM");
+    }
+
+    /// v2.3: with a custom base URL and NO key, the status must report
+    /// configured=true so the chat UI does not gate on the missing key.
+    #[test]
+    fn key_status_configured_with_custom_base_and_no_key() {
+        let _guard = SETTINGS_LOCK.lock().unwrap();
+        let saved = load_settings();
+        let mut s = load_settings();
+        s.anthropic_api_key = String::new();
+        s.api_base_url = "http://127.0.0.1:8318".to_string();
+        let _ = save_settings(&s);
+
+        let st = api_key_status();
+        assert!(st.configured, "custom base URL must count as configured");
+
+        let _ = save_settings(&saved);
+        eprintln!("PROXY-STATUS: PASS — custom base URL counts as configured");
     }
 
     /// Empty/garbage graph JSON does not crash the context builder.

@@ -254,6 +254,33 @@ fn default_dest_dir() -> Result<PathBuf, String> {
     Ok(home.join("RegistryDigests"))
 }
 
+/// Build the digest with the real clock and stored history, WITHOUT touching the
+/// destination folder. Returns (project_name, markdown). Shared by the file
+/// export (Vía A, Drive folder) and the Open Notebook push (Vía C, REST API).
+pub fn digest_markdown(project_path: &str, graph_json: &str) -> (String, String) {
+    let root = PathBuf::from(project_path);
+
+    // Project name for slug + heading: prefer graph metadata, fall back to folder name.
+    let parsed: Value = serde_json::from_str(graph_json).unwrap_or(Value::Null);
+    let project_name = parsed
+        .get("metadata")
+        .and_then(|m| m.get("project_name"))
+        .and_then(|v| v.as_str())
+        .or_else(|| parsed.get("projectName").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            root.file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("project")
+                .to_string()
+        });
+
+    let history = gather_history(&root);
+    let generated_at = chrono::Utc::now().to_rfc3339();
+    let md = build_digest(graph_json, &generated_at, &history);
+    (project_name, md)
+}
+
 /// Gather the recent dated history for the digest: all scans (summary rows) with
 /// the most recent `RECENT_CHANGE_SCANS` expanded into per-entity change detail.
 fn gather_history(project_path: &Path) -> Vec<ScanWithChanges> {
@@ -290,8 +317,6 @@ pub fn write_digest(
     graph_json: &str,
     dest_dir: Option<String>,
 ) -> Result<String, String> {
-    let root = PathBuf::from(project_path);
-
     // Resolve destination directory.
     let dir: PathBuf = match dest_dir.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()) {
         Some(d) => PathBuf::from(d),
@@ -309,24 +334,7 @@ pub fn write_digest(
     fs::create_dir_all(&dir)
         .map_err(|e| format!("Failed to create digest directory '{}': {}", dir.display(), e))?;
 
-    // Project name for slug + heading: prefer graph metadata, fall back to folder name.
-    let parsed: Value = serde_json::from_str(graph_json).unwrap_or(Value::Null);
-    let project_name = parsed
-        .get("metadata")
-        .and_then(|m| m.get("project_name"))
-        .and_then(|v| v.as_str())
-        .or_else(|| parsed.get("projectName").and_then(|v| v.as_str()))
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| {
-            root.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("project")
-                .to_string()
-        });
-
-    let history = gather_history(&root);
-    let generated_at = chrono::Utc::now().to_rfc3339();
-    let md = build_digest(graph_json, &generated_at, &history);
+    let (project_name, md) = digest_markdown(project_path, graph_json);
 
     let filename = format!("registry-digest-{}.md", slug(&project_name));
     let out_path = dir.join(filename);

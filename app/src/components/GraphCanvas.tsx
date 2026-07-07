@@ -26,6 +26,8 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
   const sigmaRef = useRef<Sigma | null>(null);
   const hoveredRef = useRef<string | null>(null);
   const selectedRef = useRef<string | null>(null);
+  // v2.3: nodes highlighted by an external AI through the AI Bridge (POST /highlight).
+  const aiHighlightsRef = useRef<Map<string, { color: string; label: string }>>(new Map());
   // Persistent position cache — survives filter toggles and prevents node jumping
   const positionCacheRef = useRef<PositionCache>(new Map());
 
@@ -89,6 +91,18 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
           };
         }
 
+        const ai = aiHighlightsRef.current.get(node);
+        if (ai) {
+          return {
+            ...attrs,
+            size: baseSize * 1.5,
+            color: ai.color || '#f59e0b',
+            highlighted: true,
+            forceLabel: true,
+            zIndex: 3,
+          };
+        }
+
         if (!hovered) return attrs;
         const g = sigma.getGraph();
         if (!g.hasNode(hovered)) return attrs;
@@ -136,6 +150,38 @@ export const GraphCanvas: React.FC<GraphCanvasProps> = ({ data, className }) => 
     return () => {
       sigma.kill();
       sigmaRef.current = null;
+    };
+  }, []);
+
+  // v2.3: poll the AI Bridge highlight list and paint marked nodes live. This is
+  // what makes `POST /highlight` visible: an external AI marks a node and the
+  // graph lights it up within ~1.5s (badge already counted them, canvas didn't).
+  useEffect(() => {
+    let cancelled = false;
+    let lastSig = '';
+    const tick = async () => {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const list = await invoke<Array<{ node_id: string; color: string; label: string }>>(
+          'get_ai_highlights'
+        );
+        if (cancelled) return;
+        const sig = JSON.stringify((list ?? []).map(h => [h.node_id, h.color]));
+        if (sig === lastSig) return; // nothing changed — skip the refresh
+        lastSig = sig;
+        const map = new Map<string, { color: string; label: string }>();
+        (list ?? []).forEach(h => map.set(h.node_id, { color: h.color, label: h.label }));
+        aiHighlightsRef.current = map;
+        sigmaRef.current?.refresh();
+      } catch {
+        // bridge not ready (welcome screen, dev reload) — silently retry next tick
+      }
+    };
+    const id = window.setInterval(tick, 1500);
+    tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
     };
   }, []);
 

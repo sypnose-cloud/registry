@@ -16,6 +16,16 @@ interface NbState {
   drive_detected: string | null;
   digest_dir: string;
   connected: boolean;
+  // v2.4 — Open Notebook (Vía C, self-hosted).
+  on_url: string;
+  on_notebook_id: string;
+  on_connected: boolean;
+  on_default_url: string;
+}
+
+interface NotebookInfo {
+  id: string;
+  name: string;
 }
 
 interface Props {
@@ -25,10 +35,17 @@ interface Props {
 export const NotebookLmWizard: React.FC<Props> = ({ onClose }) => {
   const { graph, projectPath } = useAppStore();
   const [state, setState] = useState<NbState | null>(null);
-  const [step, setStep] = useState<'loading' | 'connect' | 'guide' | 'done' | 'error'>('loading');
+  const [step, setStep] = useState<
+    'loading' | 'connect' | 'guide' | 'done' | 'on-connect' | 'on-done' | 'error'
+  >('loading');
   const [dir, setDir] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>('');
+  // v2.4 — Open Notebook connection state.
+  const [onUrl, setOnUrl] = useState<string>('');
+  const [onNotebooks, setOnNotebooks] = useState<NotebookInfo[]>([]);
+  const [onNotebookId, setOnNotebookId] = useState<string>('');
+  const [onError, setOnError] = useState<string>('');
 
   // Load wizard state once (auto-detected Drive folder + prior completion).
   useEffect(() => {
@@ -39,7 +56,11 @@ export const NotebookLmWizard: React.FC<Props> = ({ onClose }) => {
         setState(s);
         const initial = s.digest_dir || s.drive_detected || '';
         setDir(initial);
-        setStep(s.connected ? 'done' : 'connect');
+        setOnUrl(s.on_url || s.on_default_url || 'http://127.0.0.1:5055');
+        setOnNotebookId(s.on_notebook_id || '');
+        // Priority: an already-connected Open Notebook wins the "done" screen,
+        // then the Google/Drive connection, then the choice screen.
+        setStep(s.on_connected ? 'on-done' : s.connected ? 'done' : 'connect');
       } catch (e) {
         setError(String(e));
         setStep('error');
@@ -108,6 +129,70 @@ export const NotebookLmWizard: React.FC<Props> = ({ onClose }) => {
     }
   }, [busy, graph, projectPath, dir]);
 
+  // ── v2.4 — Open Notebook (Vía C) ──────────────────────────────
+
+  // Probe the instance and list its notebooks. ON_UNREACHABLE → friendly hint.
+  const onFind = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setOnError('');
+    setOnNotebooks([]);
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const list = await invoke<NotebookInfo[]>('on_list_notebooks', { url: onUrl });
+      setOnNotebooks(list);
+      if (list.length === 0) {
+        setOnError('Instance found, but it has no notebooks yet — create one in Open Notebook first.');
+      } else if (!list.some((n) => n.id === onNotebookId)) {
+        setOnNotebookId(list[0].id);
+      }
+    } catch (e) {
+      const msg = String(e);
+      setOnError(
+        msg.startsWith('ON_UNREACHABLE')
+          ? `No Open Notebook instance answered at ${onUrl}. Make sure it is running (see github.com/lfnovo/open-notebook), then retry.`
+          : msg,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, onUrl, onNotebookId]);
+
+  // Push the digest into the chosen notebook and persist the connection.
+  const onConnect = useCallback(async () => {
+    if (busy || !graph || !onNotebookId) return;
+    setBusy(true);
+    setOnError('');
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const graphJson = JSON.stringify(graph);
+      const path = projectPath ?? graph.projectPath ?? '';
+      await invoke<string>('on_connect', { url: onUrl, notebookId: onNotebookId, path, graphJson });
+      setStep('on-done');
+    } catch (e) {
+      setOnError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, graph, projectPath, onUrl, onNotebookId]);
+
+  // Re-push from the done screen (replaces the previous digest source).
+  const onPush = useCallback(async () => {
+    if (busy || !graph) return;
+    setBusy(true);
+    setOnError('');
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const graphJson = JSON.stringify(graph);
+      const path = projectPath ?? graph.projectPath ?? '';
+      await invoke<string>('on_push', { path, graphJson });
+    } catch (e) {
+      setOnError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, graph, projectPath]);
+
   const s: Record<string, AnyStyle> = {
     overlay: {
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
@@ -165,10 +250,92 @@ export const NotebookLmWizard: React.FC<Props> = ({ onClose }) => {
             <div style={{ fontSize: 12 }}>
               <span style={s.link} onClick={pickFolder}>Choose a different folder…</span>
             </div>
+            <div style={{ fontSize: 12, marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
+              Prefer a private, self-hosted alternative (no Google)?{' '}
+              <span style={s.link} onClick={() => setStep('on-connect')}>
+                Connect to Open Notebook →
+              </span>
+            </div>
             <div style={s.row}>
               <button style={s.btn} onClick={onClose}>Cancel</button>
               <button style={s.btnPrimary} onClick={connect} disabled={busy || !dir}>
                 {busy ? 'Connecting…' : 'Connect'}
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === 'on-connect' && (
+          <>
+            <div style={s.title}>📓 Connect to Open Notebook</div>
+            <div style={s.sub}>
+              Open Notebook is a self-hosted NotebookLM alternative you run yourself
+              (locally or on your server). The app pushes this folder’s living summary
+              straight into one of your notebooks — no Google, no manual steps.
+            </div>
+            <input
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+                background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8,
+                color: 'var(--text)', fontSize: 13, marginBottom: 8,
+              }}
+              value={onUrl}
+              onChange={(e) => setOnUrl(e.target.value)}
+              placeholder="http://127.0.0.1:5055"
+              spellCheck={false}
+            />
+            {onNotebooks.length > 0 && (
+              <select
+                style={{
+                  width: '100%', boxSizing: 'border-box', padding: '9px 12px',
+                  background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8,
+                  color: 'var(--text)', fontSize: 13, marginBottom: 8,
+                }}
+                value={onNotebookId}
+                onChange={(e) => setOnNotebookId(e.target.value)}
+              >
+                {onNotebooks.map((n) => (
+                  <option key={n.id} value={n.id}>{n.name}</option>
+                ))}
+              </select>
+            )}
+            {onError && <div style={s.err}>{onError}</div>}
+            <div style={s.row}>
+              <button style={s.btn} onClick={() => setStep('connect')}>Back</button>
+              {onNotebooks.length === 0 ? (
+                <button style={s.btnPrimary} onClick={onFind} disabled={busy || !onUrl.trim()}>
+                  {busy ? 'Looking…' : 'Find notebooks'}
+                </button>
+              ) : (
+                <button style={s.btnPrimary} onClick={onConnect} disabled={busy || !onNotebookId}>
+                  {busy ? 'Connecting…' : 'Connect'}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+
+        {step === 'on-done' && (
+          <>
+            <div style={s.title}>📓 Open Notebook <span style={s.ok}>connected</span></div>
+            <div style={s.sub}>
+              This folder’s summary was pushed into your notebook. Use “Update now”
+              any time to replace it with the latest changes — the previous version
+              is cleaned up automatically.
+            </div>
+            <div style={s.driveBox}>
+              🔗 <span>{state?.on_url || onUrl}</span>
+            </div>
+            {onError && <div style={s.err}>{onError}</div>}
+            <div style={{ fontSize: 12, marginTop: 6 }}>
+              <span style={s.link} onClick={() => { setOnNotebooks([]); setStep('on-connect'); }}>
+                Change instance or notebook…
+              </span>
+            </div>
+            <div style={s.row}>
+              <button style={s.btn} onClick={onClose}>Close</button>
+              <button style={s.btnPrimary} onClick={onPush} disabled={busy}>
+                {busy ? 'Updating…' : 'Update now'}
               </button>
             </div>
           </>

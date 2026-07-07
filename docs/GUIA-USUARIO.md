@@ -290,6 +290,19 @@ Lo importante: **NO** responde con conocimiento general de internet, responde SO
 
 Si algun dia falta la clave, la app te avisa con un mensaje claro y te reabre los ajustes; nunca da un error confuso.
 
+**Alternativa sin API key: un proxy local (para usuarios avanzados).** Si ya pagas una suscripcion de Claude (o usas una pasarela corporativa), no necesitas una API key aparte: puedes apuntar el chat a un proxy local compatible con la API de Anthropic, como [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI). Se configura en el mismo archivo local `~/.registry-app/settings.json` anadiendo dos campos:
+
+```json
+{
+  "api_base_url": "http://127.0.0.1:8318",
+  "chat_model": "claude-sonnet-4-6"
+}
+```
+
+- `api_base_url`: la direccion del proxy. Si esta vacio, la app usa `api.anthropic.com` como siempre.
+- `chat_model`: el modelo a pedir (los proxies exponen su propia lista; consulta `curl http://127.0.0.1:8318/v1/models`).
+- Con un proxy configurado **la API key pasa a ser opcional** — el proxy se autentica solo con tu suscripcion.
+
 ### 2. El AI Bridge (para IAs y programas de tu ordenador)
 
 El AI Bridge es un mini-servidor local que ofrece el mapa de tu carpeta a cualquier IA o programa que tengas en tu propio ordenador.
@@ -314,7 +327,7 @@ El mismo boton cambia de aspecto cuando una IA acaba de hablar con el Bridge: pa
 - **Resumen del proyecto** (`/architecture`): con una sola llamada, la IA recibe un resumen compacto de toda la carpeta (cuantos archivos y conexiones hay, lineas de codigo, lenguajes, tipos de archivo y los archivos mas centrales). Es la mejor primera pregunta para orientarse. Ejemplo: `curl http://127.0.0.1:44444/architecture`.
 - **Historia de cambios** (`/timeline`, `/changes/N`, `/snapshot/N`): la lista de todos los escaneos con su fecha y cuantas cosas se anadieron/cambiaron/borraron; el detalle de un escaneo; o el mapa completo tal como estaba en ese momento. Ejemplo: `curl http://127.0.0.1:44444/timeline`.
 - **Buscar y ver detalle** (`/search?q=` y `/node/ID`): encuentra nodos por nombre (hasta 50 resultados) o devuelve un archivo con sus conexiones entrantes y salientes. Ejemplo: `curl "http://127.0.0.1:44444/search?q=payment"`.
-- **Resaltar un nodo en tu pantalla** (`/highlight`): la unica funcion que "escribe" algo. Permite que tu IA marque un nodo del mapa para llamarte la atencion ("este es el archivo del que te hablo"). El panel del Bridge te muestra un aviso naranja: "N nodes highlighted by AI". Para quitar los marcados: `/clear-highlights`.
+- **Resaltar un nodo en tu pantalla** (`/highlight`): la unica funcion que "escribe" algo. Permite que tu IA marque un nodo del mapa para llamarte la atencion ("este es el archivo del que te hablo"). **El nodo se ilumina en el mapa en 1-2 segundos** con el color que pida la IA (naranja si no pide ninguno) y su nombre queda visible; ademas el panel del Bridge muestra el aviso "N nodes highlighted by AI". Para quitar los marcados: `/clear-highlights`.
 
 **Receta para Claude Code.** Puedes escribir una vez en el archivo `CLAUDE.md` de tu carpeta una instruccion para que tu asistente consulte el Bridge por su cuenta, por ejemplo:
 > "Antes de explorar archivos en esta carpeta, consulta el AI Bridge del Registry: usa `curl http://127.0.0.1:44444/architecture` para el mapa, `curl http://127.0.0.1:44444/timeline` para ver los cambios recientes, y `POST /highlight` para senalarme en pantalla el nodo en el que trabajas."
@@ -342,6 +355,16 @@ Para poder "conversar" con tu proyecto o escuchar un resumen hablado de el fuera
 2. Se abre una ventana que ya ha detectado sola tu carpeta de Google Drive y la muestra con un tic verde ("Google Drive found"). Si no la encontro, hay un enlace **"Choose a different folder…"** para elegirla tu. Pulsa el boton azul **"Connect"** — **CLIC 1**. En ese momento la app escribe el resumen en tu Drive y abre `notebooklm.google.com` en el navegador.
 3. Aparece una pantalla-guia **"One last step — just this once"** (un ultimo paso, solo esta vez) que te dice que hacer en NotebookLM: abrir o crear un cuaderno, pulsar **"➕ Add source → Google Drive"** y elegir el archivo llamado **"registry-digest-….md"**. Cuando lo hayas hecho, vuelve a la app y pulsa **"Done ✓"** — **CLIC 2**. Ya esta conectado para siempre.
 4. A partir de ahi, cada vez que abras el boton del cerebro veras la pantalla **"NotebookLM connected"** con un boton **"Update now"** (actualizar ahora): al pulsarlo se reescribe el mismo archivo en Drive con los ultimos cambios, y NotebookLM lo vuelve a indexar por su cuenta. **No hay que volver a anadir la fuente nunca mas.**
+
+### Alternativa sin Google: Open Notebook (autoalojado)
+
+Si prefieres no depender de Google, la misma ventana ofrece el enlace **"Connect to Open Notebook →"**. [Open Notebook](https://github.com/lfnovo/open-notebook) es una alternativa gratuita y de codigo abierto a NotebookLM que tu mismo ejecutas en tu ordenador o en tu servidor (se instala con Docker; la app NO la instala por ti, solo se conecta a ella).
+
+1. Escribe la direccion de tu instancia (por defecto `http://127.0.0.1:5055`) y pulsa **"Find notebooks"**.
+2. Elige el cuaderno de destino y pulsa **"Connect"**. La app envia el resumen directamente a ese cuaderno por su API — aqui no hay ningun paso manual: ni Drive, ni anadir fuentes a mano.
+3. Desde entonces, **"Update now"** reemplaza el resumen anterior por el nuevo (la version vieja se borra sola para no acumular copias).
+
+Ventajas: 100% privado (tus datos no salen de tus maquinas) y sin pasos manuales. Requisito: tener Open Notebook funcionando por tu cuenta.
 
 ---
 
