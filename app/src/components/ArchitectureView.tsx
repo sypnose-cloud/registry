@@ -346,7 +346,8 @@ export const ArchitectureView: React.FC = () => {
     try {
       let raw: string | null = null;
       try {
-        raw = await invoke<string | null>('get_analysis', { path: projectPath });
+        const graphJson = graph ? JSON.stringify(graph) : undefined;
+        raw = await invoke<string | null>('get_analysis', { path: projectPath, graphJson });
       } catch { raw = null; }
 
       if (!raw) {
