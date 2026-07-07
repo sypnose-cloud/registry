@@ -56,6 +56,11 @@ interface AppState {
   setChatOpen: (open: boolean) => void;
   toggleChat: () => void;
 
+  // M8: architecture view ("¿Cómo estoy hecho?")
+  isArchitectureOpen: boolean;
+  setArchitectureOpen: (open: boolean) => void;
+  toggleArchitecture: () => void;
+
   isIndexing: boolean;
   indexingProgress: { current: number; total: number };
   setIndexing: (indexing: boolean, progress?: { current: number; total: number }) => void;
@@ -149,6 +154,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   isChatOpen: false,
   setChatOpen: (open) => set({ isChatOpen: open }),
   toggleChat: () => set((s) => ({ isChatOpen: !s.isChatOpen })),
+
+  // M8: architecture view
+  isArchitectureOpen: false,
+  setArchitectureOpen: (open) => set({ isArchitectureOpen: open }),
+  toggleArchitecture: () => set((s) => ({ isArchitectureOpen: !s.isArchitectureOpen })),
 
   isIndexing: false,
   indexingProgress: { current: 0, total: 0 },

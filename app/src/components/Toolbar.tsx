@@ -36,6 +36,15 @@ const ExportIcon = () => (
   </svg>
 );
 
+// M8: Architecture view icon (stacked boxes / layout).
+const LayoutIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+    <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+    <rect x="2" y="9" width="12" height="5" rx="1" stroke="currentColor" strokeWidth="1.5"/>
+  </svg>
+);
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyStyle = React.CSSProperties & Record<string, any>;
 
@@ -48,7 +57,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   projectName = 'Sypnose Registry',
   onBack,
 }) => {
-  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen, graph } = useAppStore();
+  const { toggleSearch, toggleFilter, isFilterOpen, toggleChat, isChatOpen, graph, toggleArchitecture, isArchitectureOpen } = useAppStore();
 
   // v2.2: NotebookLM wizard overlay (replaces the old one-shot export + toast).
   const [nbOpen, setNbOpen] = useState(false);
@@ -291,6 +300,33 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           }}
         >
           <ChatIcon />
+        </button>
+
+        {/* M8: Architecture view — "¿Cómo estoy hecho?" */}
+        <button
+          style={{
+            ...styles.iconBtn,
+            ...(isArchitectureOpen ? styles.iconBtnActive : {}),
+            opacity: graph ? 1 : 0.4,
+            cursor: graph ? 'pointer' : 'default',
+          }}
+          onClick={() => graph && toggleArchitecture()}
+          disabled={!graph}
+          title={graph ? 'How am I built? — ¿Cómo estoy hecho?' : 'Load a folder first'}
+          onMouseEnter={e => {
+            if (graph && !isArchitectureOpen) {
+              (e.currentTarget as HTMLButtonElement).style.background = 'var(--panel-hover)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text)';
+            }
+          }}
+          onMouseLeave={e => {
+            if (!isArchitectureOpen) {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-muted)';
+            }
+          }}
+        >
+          <LayoutIcon />
         </button>
 
         {/* v2.2: NotebookLM wizard (2 clicks). Disabled when no graph is loaded. */}

@@ -16,6 +16,7 @@ import type { UnifiedGraph } from './types/graph';
 import { adaptRawGraph } from './utils/adaptGraph';
 import { TimeSlider } from './components/TimeSlider';
 import { ChatPanel } from './components/ChatPanel';
+import { ArchitectureView } from './components/ArchitectureView';
 import sampleData from './data/sample-graph.json';
 
 function adaptSampleGraph(): UnifiedGraph {
@@ -324,6 +325,7 @@ function App() {
       <StatusBar />
       <TimeSlider />
       <ChatPanel />
+      <ArchitectureView />
       <AiBridgeBadge />
       {selectedNodeId && <NodeDetailPanel />}
       <SearchPalette />
