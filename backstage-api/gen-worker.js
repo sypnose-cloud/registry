@@ -24,7 +24,9 @@ const LOG_FILE = path.join(DATA_DIR, 'organigramas.log');
 const CB_EXE = process.env.CODEBOARDING_EXE
   || path.join(HOME, 'codeboarding-venv', 'Scripts', 'codeboarding.exe');
 const KEY_FILE = path.join(HOME, '.codeboarding', 'cliproxy.key');
-const BASE_URL = process.env.CB_BASE_URL || 'https://proxy.sypnose.cloud/v1';
+// Por túnel SSH al 67 (ssh -N -L 8317:localhost:8317): el endpoint público
+// proxy.sypnose.cloud está tras Cloudflare Access → 302 al login, el LLM no pasa.
+const BASE_URL = process.env.CB_BASE_URL || 'http://127.0.0.1:8317/v1';
 const TIMEOUT_MS = 45 * 60 * 1000; // 45 min por proyecto
 const EVERY_MS = 6 * 60 * 60 * 1000; // ciclo: cada 6h
 const BOOT_DELAY_MS = 60 * 1000; // gracia tras el arranque

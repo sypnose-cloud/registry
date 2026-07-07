@@ -51,8 +51,10 @@ run_one() {
 
   log "GEN $name: arrancando codeboarding --local $wpath (timeout ${TIMEOUT_S}s)"
   # Entorno LIMPIO: solo OPENAI_* — nada de ANTHROPIC/GOOGLE que confunda el proveedor.
+  # BASE_URL por túnel SSH (ssh -N -L 8317:localhost:8317 al 67): el endpoint público
+  # proxy.sypnose.cloud está tras Cloudflare Access → 302 al login y el LLM revienta.
   env -u ANTHROPIC_API_KEY -u GOOGLE_API_KEY -u GEMINI_API_KEY \
-      OPENAI_BASE_URL="https://proxy.sypnose.cloud/v1" \
+      OPENAI_BASE_URL="${CB_BASE_URL:-http://127.0.0.1:8317/v1}" \
       OPENAI_API_KEY="$(tr -d '\r\n' < "$KEYFILE")" \
       "$CB" --local "$wpath" </dev/null >"$HOME/.registry-data/cb-$name.out" 2>&1 &
   local pid=$!
