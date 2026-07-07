@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organigramas — Sypnose Registry</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #121722; --card: #171e2b; --card-hover: #1d2636;
+    --border: #263042; --border-soft: #1c2433;
+    --text: #d7dde8; --muted: #8b95a7; --dim: #5c6678;
+    --accent: #4da3ff; --accent-soft: #163050;
+    --ok: #3fb68b; --ok-soft: #12362b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; }
+  header {
+    display: flex; align-items: baseline; gap: 14px; padding: 16px 24px;
+    border-bottom: 1px solid var(--border-soft); background: var(--panel);
+  }
+  header h1 { font-size: 17px; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12.5px; }
+  header a.back {
+    margin-left: auto; color: var(--accent); text-decoration: none; font-size: 13px;
+    border: 1px solid var(--border); padding: 6px 12px; border-radius: 8px;
+  }
+  header a.back:hover { background: var(--card); }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 24px 60px; }
+  .intro { color: var(--muted); font-size: 13.5px; margin-bottom: 24px; max-width: 720px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+  a.proj {
+    display: block; background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 16px 18px; text-decoration: none; color: var(--text);
+    transition: background .12s, border-color .12s;
+  }
+  a.proj:hover { background: var(--card-hover); border-color: var(--accent); }
+  a.proj.pending { opacity: .55; cursor: default; }
+  a.proj.pending:hover { border-color: var(--border); background: var(--card); }
+  .proj h3 { font: 600 14.5px/1.3 ui-monospace, 'Cascadia Code', monospace; margin-bottom: 8px; word-break: break-all; }
+  .badge {
+    display: inline-block; font-size: 11px; border-radius: 6px; padding: 3px 8px;
+  }
+  .badge.ok { color: var(--ok); background: var(--ok-soft); }
+  .badge.no { color: var(--dim); background: var(--panel); border: 1px solid var(--border-soft); }
+  .state { text-align: center; color: var(--muted); padding: 80px 20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Organigramas</h1>
+  <span class="sub">arquitectura viva de cada proyecto, generada automáticamente</span>
+  <a class="back" href="/panel">Dashboard clásico →</a>
+</header>
+<div class="wrap">
+  <p class="intro">Cada proyecto registrado obtiene su organigrama automáticamente: análisis estático del código + un LLM que decide los componentes. Las tarjetas abren el diagrama con enlaces al código real.</p>
+  <div class="grid" id="grid"><div class="state">Cargando proyectos…</div></div>
+</div>
+<script>
+function fetchJSON(url) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('GET', url);
+    x.timeout = 15000;
+    x.onload = () => { try { resolve(JSON.parse(x.responseText)); } catch (e) { reject(e); } };
+    x.onerror = () => reject(new Error('red'));
+    x.ontimeout = () => reject(new Error('timeout'));
+    x.send();
+  });
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+fetchJSON('/arch/list').then(items => {
+  const grid = document.getElementById('grid');
+  items.sort((a, b) => (b.hasArch - a.hasArch) || a.name.localeCompare(b.name));
+  const ready = items.filter(i => i.hasArch).length;
+  document.querySelector('.intro').innerHTML +=
+    ` <b style="color:var(--text)">${ready}</b> de <b style="color:var(--text)">${items.length}</b> listos.`;
+  grid.innerHTML = items.map(i => i.hasArch
+    ? `<a class="proj" href="/arch/${encodeURIComponent(i.name)}"><h3>${esc(i.name)}</h3><span class="badge ok">● organigrama listo</span></a>`
+    : `<a class="proj pending" href="javascript:void(0)"><h3>${esc(i.name)}</h3><span class="badge no">○ generándose…</span></a>`
+  ).join('');
+}).catch(() => {
+  document.getElementById('grid').innerHTML = '<div class="state">No se pudo cargar la lista de proyectos.</div>';
+});
+</script>
+</body>
+</html>

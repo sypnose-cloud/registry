@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Organigrama — Sypnose Registry</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #121722; --card: #171e2b; --card-hover: #1d2636;
+    --border: #263042; --border-soft: #1c2433;
+    --text: #d7dde8; --muted: #8b95a7; --dim: #5c6678;
+    --accent: #4da3ff; --accent-soft: #163050;
+    --ok: #3fb68b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; }
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 14px 22px;
+    border-bottom: 1px solid var(--border-soft); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 16px; font-weight: 600; }
+  header a.back {
+    margin-left: auto; color: var(--accent); text-decoration: none; font-size: 13px;
+    border: 1px solid var(--border); padding: 6px 12px; border-radius: 8px;
+  }
+  header a.back:hover { background: var(--card); }
+  .wrap { max-width: 1020px; margin: 0 auto; padding: 26px 22px 60px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+  .meta b { color: var(--text); font-weight: 600; }
+  .hint { color: var(--dim); font-size: 12px; margin-bottom: 20px; }
+
+  .flowbox { position: relative; }
+  #wires { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: visible; }
+  #wires path { fill: none; stroke: var(--border); stroke-width: 1.5; transition: stroke .15s, stroke-width .15s; }
+  #wires path.hot { stroke: var(--accent); stroke-width: 2.5; }
+  .flow { display: flex; flex-direction: column; position: relative; z-index: 2; }
+  .level {
+    border: 1px solid var(--border-soft); border-radius: 16px; padding: 18px;
+    background: color-mix(in srgb, var(--panel) 72%, transparent); position: relative; margin-top: 8px;
+  }
+  .level + .level { margin-top: 46px; }
+  .level::before {
+    content: attr(data-label); position: absolute; top: -9px; left: 16px;
+    background: var(--bg); color: var(--dim); font-size: 11px; letter-spacing: .08em;
+    padding: 0 8px; text-transform: uppercase;
+  }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .node {
+    background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 13px 15px; cursor: pointer; transition: background .12s, border-color .12s;
+  }
+  .node:hover { background: var(--card-hover); border-color: var(--accent); }
+  .node h3 { font-size: 14.5px; font-weight: 600; margin-bottom: 4px; }
+  .node p { font-size: 12.5px; color: var(--muted); }
+  .node .files { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .node .more { font-size: 11px; color: var(--accent); margin-top: 7px; }
+  .chip {
+    font: 11px/1 ui-monospace, 'Cascadia Code', monospace; color: var(--accent);
+    background: var(--accent-soft); border-radius: 6px; padding: 4px 7px;
+  }
+  .chip:hover { text-decoration: underline; }
+
+  .rels { margin-top: 34px; }
+  .rels h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin-bottom: 12px; letter-spacing: .05em; text-transform: uppercase; }
+  .rel {
+    display: flex; gap: 10px; align-items: baseline; padding: 9px 0;
+    border-bottom: 1px solid var(--border-soft); font-size: 13px;
+  }
+  .rel .pair { white-space: nowrap; color: var(--text); }
+  .rel .arrow { color: var(--accent); }
+  .rel .what { color: var(--muted); }
+
+  .overlay {
+    position: fixed; inset: 0; background: rgba(4,7,12,.78); display: none;
+    align-items: center; justify-content: center; z-index: 50; padding: 30px;
+  }
+  .overlay.open { display: flex; }
+  .viewer {
+    width: min(960px, 100%); height: min(80vh, 720px); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .viewer .bar {
+    display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+    border-bottom: 1px solid var(--border-soft); font: 12.5px ui-monospace, monospace; color: var(--accent);
+  }
+  .viewer .bar button {
+    margin-left: auto; background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+  }
+  .viewer pre {
+    flex: 1; overflow: auto; padding: 14px 0; font: 12px/1.6 ui-monospace, 'Cascadia Code', monospace;
+    color: var(--text);
+  }
+  .viewer pre .ln { display: block; padding: 0 16px 0 0; white-space: pre; }
+  .viewer pre .ln .no {
+    display: inline-block; width: 52px; text-align: right; padding-right: 14px;
+    color: var(--dim); user-select: none;
+  }
+  .viewer pre .ln.hl { background: var(--accent-soft); }
+
+  .detail {
+    width: min(680px, 100%); max-height: min(82vh, 760px); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .detail .bar {
+    display: flex; align-items: center; gap: 10px; padding: 12px 18px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .detail .bar h2 { font-size: 15.5px; font-weight: 600; }
+  .detail .bar button {
+    margin-left: auto; background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+  }
+  .detail .body { overflow: auto; padding: 16px 18px 22px; }
+  .detail .body p.desc { font-size: 13.5px; color: var(--text); margin-bottom: 16px; }
+  .detail h4 { font-size: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; margin: 16px 0 8px; }
+  .detail .files { display: flex; flex-wrap: wrap; gap: 6px; }
+  .detail .flowline {
+    display: flex; gap: 8px; align-items: baseline; padding: 7px 0; font-size: 13px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .detail .flowline .dir { color: var(--accent); font-weight: 600; white-space: nowrap; }
+  .detail .flowline .who { color: var(--text); white-space: nowrap; }
+  .detail .flowline .what { color: var(--muted); }
+  .state { text-align: center; color: var(--muted); padding: 80px 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Organigrama</h1>
+  <a class="back" href="/">← Organigramas</a>
+</header>
+<div class="wrap">
+  <div class="meta" id="meta"></div>
+  <div class="hint" id="hint"></div>
+  <div class="flowbox">
+    <svg id="wires"><defs>
+      <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.6" stroke-linecap="round"/>
+      </marker>
+    </defs></svg>
+    <div class="flow" id="flow"><div class="state">Cargando análisis…</div></div>
+  </div>
+  <div class="rels" id="rels"></div>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="viewer">
+    <div class="bar"><span id="vpath"></span><button onclick="closeViewer()">✕ Cerrar</button></div>
+    <pre id="vcode"></pre>
+  </div>
+</div>
+
+<div class="overlay" id="doverlay">
+  <div class="detail">
+    <div class="bar"><h2 id="dtitle"></h2><button onclick="closeDetail()">✕ Cerrar</button></div>
+    <div class="body" id="dbody"></div>
+  </div>
+</div>
+
+<script>
+const project = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop());
+document.getElementById('title').textContent = 'Organigrama — ' + project;
+
+let COMPS = [], RELS = [], BYID = {};
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('GET', url);
+    x.timeout = 15000;
+    x.onload = () => (x.status >= 200 && x.status < 300) ? resolve(x.responseText) : reject(new Error('HTTP ' + x.status));
+    x.onerror = () => reject(new Error('error de red'));
+    x.ontimeout = () => reject(new Error('timeout'));
+    x.send();
+  });
+}
+
+function assignLevels(comps, rels) {
+  const ids = comps.map(c => String(c.component_id));
+  const incoming = Object.fromEntries(ids.map(i => [i, 0]));
+  const out = Object.fromEntries(ids.map(i => [i, []]));
+  rels.forEach(r => {
+    const s = String(r.src_id), d = String(r.dst_id);
+    if (incoming[d] !== undefined) incoming[d]++;
+    if (out[s]) out[s].push(d);
+  });
+  const level = {};
+  let frontier = ids.filter(i => incoming[i] === 0);
+  if (!frontier.length) frontier = [ids[0]];
+  let depth = 0;
+  const seen = new Set();
+  while (frontier.length && depth < 6) {
+    frontier.forEach(i => { if (!seen.has(i)) { level[i] = depth; seen.add(i); } });
+    const next = new Set();
+    frontier.forEach(i => (out[i] || []).forEach(d => { if (!seen.has(d)) next.add(d); }));
+    frontier = [...next];
+    depth++;
+  }
+  ids.forEach(i => { if (level[i] === undefined) level[i] = depth; });
+  return level;
+}
+
+const LABELS = ['Entrada', 'Núcleo', 'Superficies', 'Nivel 4', 'Nivel 5', 'Nivel 6', 'Otros'];
+
+function chipHtml(e) {
+  return `<span class="chip" data-f="${esc(e.reference_file)}" data-l="${e.reference_start_line || 1}" data-e="${e.reference_end_line || 1}">${esc(e.reference_file)}:${e.reference_start_line || 1}</span>`;
+}
+
+async function main() {
+  let payload;
+  try {
+    payload = JSON.parse(await fetchText(`/arch/${encodeURIComponent(project)}/data`));
+  } catch (e) {
+    document.getElementById('flow').innerHTML =
+      '<div class="state">Este proyecto aún no tiene análisis generado.<br>Se creará automáticamente en el próximo ciclo del registry.</div>';
+    return;
+  }
+  const analysis = payload.analysis;
+  COMPS = analysis.components || [];
+  RELS = analysis.components_relations || [];
+  COMPS.forEach(c => { BYID[String(c.component_id)] = c; });
+
+  document.getElementById('meta').innerHTML =
+    `<b>${COMPS.length}</b> componentes · <b>${RELS.length}</b> flujos · generado automáticamente por análisis estático + LLM`;
+  document.getElementById('hint').textContent =
+    'Clic en una tarjeta = ficha del componente y su flujo · clic en un archivo = código real · pasa el ratón para iluminar las flechas';
+
+  const level = assignLevels(COMPS, RELS);
+  const maxL = Math.max(...Object.values(level));
+  const flow = document.getElementById('flow');
+  flow.innerHTML = '';
+
+  for (let L = 0; L <= maxL; L++) {
+    const group = COMPS.filter(c => level[String(c.component_id)] === L);
+    if (!group.length) continue;
+    const lvl = document.createElement('div');
+    lvl.className = 'level';
+    lvl.dataset.label = LABELS[Math.min(L, LABELS.length - 1)];
+    const cards = document.createElement('div');
+    cards.className = 'cards';
+    group.forEach(c => {
+      const ents = c.key_entities || [];
+      const el = document.createElement('div');
+      el.className = 'node';
+      el.dataset.cid = String(c.component_id);
+      el.innerHTML = `<h3>${esc(c.name)}</h3><p>${esc((c.description || '').slice(0, 140))}${(c.description || '').length > 140 ? '…' : ''}</p>` +
+        `<div class="files">${ents.slice(0, 6).map(chipHtml).join('')}</div>` +
+        `<div class="more">ficha completa y flujo →</div>`;
+      el.addEventListener('click', ev => {
+        const chip = ev.target.closest('.chip');
+        if (chip) { ev.stopPropagation(); return openFile(chip.dataset.f, +chip.dataset.l, +chip.dataset.e); }
+        openDetail(String(c.component_id));
+      });
+      el.addEventListener('mouseenter', () => highlightWires(String(c.component_id), true));
+      el.addEventListener('mouseleave', () => highlightWires(String(c.component_id), false));
+      cards.appendChild(el);
+    });
+    lvl.appendChild(cards);
+    flow.appendChild(lvl);
+  }
+
+  const relsEl = document.getElementById('rels');
+  if (RELS.length) {
+    relsEl.innerHTML = '<h2>El flujo, paso a paso</h2>' + RELS.map(r =>
+      `<div class="rel"><span class="pair">${esc((BYID[String(r.src_id)] || {}).name || r.src_name)} <span class="arrow">→</span> ${esc((BYID[String(r.dst_id)] || {}).name || r.dst_name)}</span><span class="what">${esc(r.relation)}</span></div>`
+    ).join('');
+  }
+
+  requestAnimationFrame(drawWires);
+  window.addEventListener('resize', () => requestAnimationFrame(drawWires));
+}
+
+function cardEl(cid) { return document.querySelector(`.node[data-cid="${CSS.escape(cid)}"]`); }
+
+function drawWires() {
+  const svg = document.getElementById('wires');
+  const box = document.querySelector('.flowbox').getBoundingClientRect();
+  svg.setAttribute('width', box.width);
+  svg.setAttribute('height', box.height);
+  [...svg.querySelectorAll('path.wire')].forEach(p => p.remove());
+  RELS.forEach((r, i) => {
+    const a = cardEl(String(r.src_id)), b = cardEl(String(r.dst_id));
+    if (!a || !b) return;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const sameRow = Math.abs(ra.top - rb.top) < 30;
+    let x1, y1, x2, y2;
+    if (sameRow) {
+      const leftFirst = ra.left < rb.left;
+      x1 = (leftFirst ? ra.right : ra.left) - box.left; y1 = ra.top + ra.height / 2 - box.top;
+      x2 = (leftFirst ? rb.left : rb.right) - box.left;  y2 = rb.top + rb.height / 2 - box.top;
+    } else {
+      const down = rb.top > ra.top;
+      x1 = ra.left + ra.width / 2 - box.left; y1 = (down ? ra.bottom : ra.top) - box.top;
+      x2 = rb.left + rb.width / 2 - box.left; y2 = (down ? rb.top : rb.bottom) - box.top;
+    }
+    const midY = (y1 + y2) / 2;
+    const d = sameRow
+      ? `M${x1},${y1} C${(x1 + x2) / 2},${y1 - 26} ${(x1 + x2) / 2},${y2 - 26} ${x2},${y2}`
+      : `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+    const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', d);
+    p.setAttribute('class', 'wire');
+    p.setAttribute('marker-end', 'url(#arr)');
+    p.dataset.src = String(r.src_id);
+    p.dataset.dst = String(r.dst_id);
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+    t.textContent = r.relation;
+    p.appendChild(t);
+    svg.appendChild(p);
+  });
+}
+
+function highlightWires(cid, on) {
+  document.querySelectorAll('#wires path.wire').forEach(p => {
+    if (p.dataset.src === cid || p.dataset.dst === cid) p.classList.toggle('hot', on);
+  });
+}
+
+function openDetail(cid) {
+  const c = BYID[cid];
+  if (!c) return;
+  document.getElementById('dtitle').textContent = c.name;
+  const ents = c.key_entities || [];
+  const outs = RELS.filter(r => String(r.src_id) === cid);
+  const ins  = RELS.filter(r => String(r.dst_id) === cid);
+  let html = `<p class="desc">${esc(c.description || '')}</p>`;
+  if (ents.length) {
+    html += `<h4>Archivos (${ents.length})</h4><div class="files">${ents.map(chipHtml).join('')}</div>`;
+  }
+  if (outs.length) {
+    html += '<h4>Llama a / envía →</h4>' + outs.map(r =>
+      `<div class="flowline"><span class="dir">→</span><span class="who">${esc((BYID[String(r.dst_id)] || {}).name || r.dst_name)}</span><span class="what">${esc(r.relation)}</span></div>`).join('');
+  }
+  if (ins.length) {
+    html += '<h4>Recibe de ←</h4>' + ins.map(r =>
+      `<div class="flowline"><span class="dir">←</span><span class="who">${esc((BYID[String(r.src_id)] || {}).name || r.src_name)}</span><span class="what">${esc(r.relation)}</span></div>`).join('');
+  }
+  if (!outs.length && !ins.length) html += '<h4>Sin flujos detectados</h4>';
+  const body = document.getElementById('dbody');
+  body.innerHTML = html;
+  body.querySelectorAll('.chip').forEach(chip => {
+    chip.style.cursor = 'pointer';
+    chip.addEventListener('click', () => { closeDetail(); openFile(chip.dataset.f, +chip.dataset.l, +chip.dataset.e); });
+  });
+  document.getElementById('doverlay').classList.add('open');
+}
+function closeDetail() { document.getElementById('doverlay').classList.remove('open'); }
+
+async function openFile(rel, start, end) {
+  const overlay = document.getElementById('overlay');
+  const code = document.getElementById('vcode');
+  document.getElementById('vpath').textContent = rel + (start ? `  ·  líneas ${start}–${end}` : '');
+  code.innerHTML = '<span class="ln"><span class="no"></span>Cargando…</span>';
+  overlay.classList.add('open');
+  const url = `/arch/${encodeURIComponent(project)}/file?path=${encodeURIComponent(rel)}`;
+  let text;
+  try {
+    text = await fetchText(url);
+  } catch (e1) {
+    try {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      text = await r.text();
+    } catch (e2) {
+      code.innerHTML = `<span class="ln"><span class="no"></span>No se pudo cargar: ${esc(e1.message)} / ${esc(e2.message)}</span>`;
+      return;
+    }
+  }
+  const lines = text.split('\n');
+  code.innerHTML = lines.map((l, i) => {
+    const n = i + 1;
+    const hl = start && n >= start && n <= end ? ' hl' : '';
+    return `<span class="ln${hl}" id="L${n}"><span class="no">${n}</span>${esc(l)}</span>`;
+  }).join('');
+  if (start) {
+    const t = document.getElementById('L' + start);
+    if (t) t.scrollIntoView({ block: 'center' });
+  }
+}
+function closeViewer() { document.getElementById('overlay').classList.remove('open'); }
+document.getElementById('overlay').addEventListener('click', e => { if (e.target.id === 'overlay') closeViewer(); });
+document.getElementById('doverlay').addEventListener('click', e => { if (e.target.id === 'doverlay') closeDetail(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeViewer(); closeDetail(); } });
+main();
+</script>
+</body>
+</html>
