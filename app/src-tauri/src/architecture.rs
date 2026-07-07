@@ -133,8 +133,14 @@ fn compute_degrees(edges: &[Value]) -> HashMap<String, u32> {
 }
 
 /// community id string -> (name, color)
+///
+/// Accepts TWO formats (the front sends UnifiedGraph, the indexer writes raw):
+///  - Raw indexer:  `graph.metadata.communities` — object `{"0": {"name":"Root","color":"#2563eb","size":5}}`
+///  - UnifiedGraph: `graph.communities` — array `[{"id":0,"name":"Root","color":"#2563eb","nodeCount":5}]`
 fn parse_communities(graph: &Value) -> HashMap<String, (String, String)> {
     let mut map = HashMap::new();
+
+    // Format 1: raw indexer → metadata.communities as object
     if let Some(comms) = graph
         .get("metadata")
         .and_then(|m| m.get("communities"))
@@ -154,6 +160,37 @@ fn parse_communities(graph: &Value) -> HashMap<String, (String, String)> {
             map.insert(id.clone(), (name, color));
         }
     }
+
+    // Format 2: UnifiedGraph from front → communities as array [{id, name, color, nodeCount}]
+    if map.is_empty() {
+        if let Some(comms) = graph.get("communities").and_then(|c| c.as_array()) {
+            for c in comms {
+                let id = c
+                    .get("id")
+                    .map(|v| match v {
+                        Value::Number(n) => n.to_string(),
+                        Value::String(s) => s.clone(),
+                        _ => String::new(),
+                    })
+                    .unwrap_or_default();
+                if id.is_empty() {
+                    continue;
+                }
+                let name = c
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&id)
+                    .to_string();
+                let color = c
+                    .get("color")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("#6b7280")
+                    .to_string();
+                map.insert(id, (name, color));
+            }
+        }
+    }
+
     map
 }
 
@@ -363,10 +400,12 @@ pub fn build_static(project_root: Option<&Path>, graph_json: &str) -> Result<Arc
         .cloned()
         .unwrap_or_default();
 
+    // Accept both raw indexer (metadata.project_name) and UnifiedGraph (projectName).
     let project_name = graph
         .get("metadata")
         .and_then(|m| m.get("project_name"))
         .and_then(|v| v.as_str())
+        .or_else(|| graph.get("projectName").and_then(|v| v.as_str()))
         .unwrap_or("Project")
         .to_string();
 
