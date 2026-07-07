@@ -5,35 +5,44 @@ import React, {
 import { useAppStore } from '../stores/appStore';
 
 /**
- * M10 — Organigrama (vista inmersiva).
+ * M10 — Organigrama (vista inmersiva). Tema claro.
  *
- * Porta FIEL arch.html del 67 al interior de la app React Tauri.
- * Esquema de datos: CodeBoarding (get_analysis / generate_analysis).
- * Principio: lo que no está dentro del contenedor MSIX no existe.
- *
- * Diseño tokens: los mismos :root de arch.html.
- * Flechas SVG: drawWires / highlightWires como en arch.html.
- * Ficha de componente: descripción + archivos + flujos "→" y "←".
- * Visor de código: números de línea, rango resaltado, scroll al centro.
- * Lista "El flujo, paso a paso".
- * Vínculo con el grafo: "Ver en el grafo →" mapea reference_file → node.path.
+ * Re-skin completo: tokens claros (orden directa Carlos "odio el negro").
+ * Chips binarios → reveal_in_explorer (cursor default, atenuado, tooltip).
+ * Sin relaciones → agrupación por tipo de contenido (Código/Datos/Documentación).
  */
 
-// ── Design tokens (from arch.html :root) ───────────────────────────────────
+// ── Design tokens (LIGHT theme — Carlos order: odio el negro) ──────────────
 const T = {
-  bg: '#0b0e14',
-  panel: '#121722',
-  card: '#171e2b',
-  cardHover: '#1d2636',
-  border: '#263042',
-  borderSoft: '#1c2433',
-  text: '#d7dde8',
-  muted: '#8b95a7',
-  dim: '#5c6678',
-  accent: '#4da3ff',
-  accentSoft: '#163050',
-  ok: '#3fb68b',
+  bg: '#ffffff',
+  panel: '#f8fafc',
+  card: '#ffffff',
+  cardHover: '#f1f5f9',
+  border: '#e2e8f0',
+  borderSoft: '#e5e7eb',
+  text: '#111827',
+  muted: '#6b7280',
+  dim: '#9ca3af',
+  accent: '#2563eb',
+  accentSoft: '#dbeafe',
+  ok: '#059669',
+  okSoft: '#d1fae5',
 } as const;
+
+// ── Binary file extensions → reveal in explorer instead of code viewer ──────
+const BINARY_EXTS = new Set([
+  'wav', 'mp3', 'ogg',
+  'png', 'jpg', 'jpeg', 'gif', 'ico', 'svg',
+  'pkl', 'bin', 'exe', 'dll',
+  'zip', '7z', 'pdf',
+  'onnx', 'pt', 'safetensors',
+  'msix', 'db', 'sqlite',
+]);
+
+function isBinaryFile(filePath: string): boolean {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  return BINARY_EXTS.has(ext);
+}
 
 // ── CodeBoarding contract types ─────────────────────────────────────────────
 interface KeyEntity {
@@ -62,14 +71,41 @@ interface Analysis {
   components_relations: AnalysisRelation[];
 }
 
-// ── Level labels (same as arch.html) ────────────────────────────────────────
+// ── Level labels ─────────────────────────────────────────────────────────────
 const LABELS = ['Entrada', 'Núcleo', 'Superficies', 'Nivel 4', 'Nivel 5', 'Nivel 6', 'Otros'];
+
+// ── Content-type grouping labels (used when 0 relations) ─────────────────────
+const CODE_EXTS = new Set(['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'java', 'kt', 'swift', 'c', 'cpp', 'h', 'cs', 'rb', 'php', 'vue', 'svelte', 'sh', 'bash', 'ps1', 'lua', 'r', 'scala', 'clj']);
+const DATA_EXTS = new Set(['json', 'yaml', 'yml', 'toml', 'csv', 'xml', 'sql', 'env', 'ini', 'cfg', 'config', 'lock', 'pkl', 'db', 'sqlite', 'parquet', 'ndjson', 'jsonl']);
+const DOC_EXTS = new Set(['md', 'mdx', 'txt', 'rst', 'tex', 'adoc', 'pdf', 'html', 'htm']);
+
+type ContentGroup = 'Código' | 'Datos' | 'Documentación' | 'Otros';
+
+function contentGroup(comp: AnalysisComponent): ContentGroup {
+  const entities = comp.key_entities ?? [];
+  if (!entities.length) return 'Otros';
+  // Majority vote across entities
+  const counts: Record<ContentGroup, number> = { 'Código': 0, 'Datos': 0, 'Documentación': 0, 'Otros': 0 };
+  for (const e of entities) {
+    const ext = e.reference_file.split('.').pop()?.toLowerCase() ?? '';
+    if (CODE_EXTS.has(ext)) counts['Código']++;
+    else if (DATA_EXTS.has(ext)) counts['Datos']++;
+    else if (DOC_EXTS.has(ext)) counts['Documentación']++;
+    else counts['Otros']++;
+  }
+  let best: ContentGroup = 'Otros';
+  let max = -1;
+  for (const [k, v] of Object.entries(counts) as [ContentGroup, number][]) {
+    if (v > max) { max = v; best = k; }
+  }
+  return best;
+}
 
 function cid(c: AnalysisComponent): string {
   return String(c.component_id);
 }
 
-/** Kahn topological sort → level per component id (same algo as arch.html) */
+/** Kahn topological sort → level per component id */
 function assignLevels(comps: AnalysisComponent[], rels: AnalysisRelation[]): Map<string, number> {
   const ids = comps.map(c => cid(c));
   const incoming = new Map<string, number>(ids.map(i => [i, 0]));
@@ -98,7 +134,7 @@ function assignLevels(comps: AnalysisComponent[], rels: AnalysisRelation[]): Map
   return level;
 }
 
-// ── Tiny styles (inline, matching arch.html look) ───────────────────────────
+// ── Styles (light theme) ─────────────────────────────────────────────────────
 const css = {
   overlay: {
     position: 'fixed' as const, inset: 0, zIndex: 400,
@@ -113,7 +149,7 @@ const css = {
   h1: { fontSize: 16, fontWeight: 600, color: T.text, margin: 0 },
   headerActions: { marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' },
   btn: {
-    background: 'none', border: `1px solid ${T.border}`, color: T.muted,
+    background: T.panel, border: `1px solid ${T.border}`, color: T.muted,
     borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
   },
   btnAccent: {
@@ -125,16 +161,21 @@ const css = {
   hint: { color: T.dim, fontSize: 12, marginBottom: 20 },
   state: { textAlign: 'center' as const, color: T.muted, padding: '80px 20px', fontSize: 14 },
   errorBox: {
-    background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)',
-    borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#f87171', margin: '8px 0',
+    background: 'rgba(220,38,38,0.06)', border: '1px solid rgba(220,38,38,0.25)',
+    borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#dc2626', margin: '8px 0',
+  },
+  noFlowNotice: {
+    background: T.accentSoft, border: `1px solid ${T.border}`, borderRadius: 8,
+    padding: '8px 14px', fontSize: 12, color: T.accent, marginBottom: 16,
   },
   flowbox: { position: 'relative' as const },
   wiresWrap: { position: 'absolute' as const, inset: 0, pointerEvents: 'none' as const, zIndex: 1, overflow: 'visible' as const },
   flow: { display: 'flex', flexDirection: 'column' as const, position: 'relative' as const, zIndex: 2 },
   level: {
-    border: `1px solid ${T.borderSoft}`, borderRadius: 16, padding: 18,
-    background: 'rgba(18,23,34,0.72)', position: 'relative' as const,
+    border: `1px solid ${T.border}`, borderRadius: 16, padding: 18,
+    background: T.panel, position: 'relative' as const,
     marginTop: 8,
+    boxShadow: '0 1px 3px rgba(0,0,0,.08)',
   },
   levelGap: { marginTop: 46 },
   levelLabel: {
@@ -146,15 +187,23 @@ const css = {
   node: {
     background: T.card, border: `1px solid ${T.border}`, borderRadius: 12,
     padding: '13px 15px', cursor: 'pointer', transition: 'background 0.12s, border-color 0.12s',
+    boxShadow: '0 1px 3px rgba(0,0,0,.08)',
   },
   nodeH3: { fontSize: 14.5, fontWeight: 600, color: T.text, marginBottom: 4 },
   nodeP: { fontSize: 12.5, color: T.muted },
   nodeFiles: { marginTop: 9, display: 'flex', flexWrap: 'wrap' as const, gap: 5 },
   nodeMore: { fontSize: 11, color: T.accent, marginTop: 7 },
+  // Text chip: clickable, opens code viewer
   chip: {
     fontFamily: "ui-monospace, 'Cascadia Code', monospace", fontSize: 11, lineHeight: 1,
     color: T.accent, background: T.accentSoft, borderRadius: 6, padding: '4px 7px',
     border: 'none', cursor: 'pointer',
+  },
+  // Binary chip: NOT clickable directly — reveals in explorer via onclick, visually dimmed
+  chipBinary: {
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace", fontSize: 11, lineHeight: 1,
+    color: T.dim, background: '#f3f4f6', borderRadius: 6, padding: '4px 7px',
+    border: `1px solid ${T.borderSoft}`, cursor: 'default',
   },
   rels: { marginTop: 34 },
   relsH2: { fontSize: 14, color: T.muted, fontWeight: 600, marginBottom: 12, letterSpacing: '0.05em', textTransform: 'uppercase' as const },
@@ -162,45 +211,47 @@ const css = {
   relPair: { whiteSpace: 'nowrap' as const, color: T.text },
   relArrow: { color: T.accent },
   relWhat: { color: T.muted },
-  // Overlay (viewer + detail)
+  // Modal overlay: light semi-transparent
   modalOverlay: {
-    position: 'fixed' as const, inset: 0, background: 'rgba(4,7,12,0.78)',
+    position: 'fixed' as const, inset: 0, background: 'rgba(15,23,42,.35)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 30,
   },
   viewer: {
     width: 'min(960px, 100%)', height: 'min(80vh, 720px)', background: T.panel,
     border: `1px solid ${T.border}`, borderRadius: 14, display: 'flex', flexDirection: 'column' as const,
-    overflow: 'hidden',
+    overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,.12)',
   },
   viewerBar: {
     display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px',
     borderBottom: `1px solid ${T.borderSoft}`,
     fontFamily: "ui-monospace, monospace", fontSize: 12.5, color: T.accent,
+    background: T.panel,
   },
   viewerClose: {
-    marginLeft: 'auto', background: 'none', border: `1px solid ${T.border}`, color: T.muted,
+    marginLeft: 'auto', background: T.panel, border: `1px solid ${T.border}`, color: T.muted,
     borderRadius: 7, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
   },
+  // Code viewer pre: light background, dark text, highlighted line = accentSoft
   viewerPre: {
     flex: 1, overflow: 'auto', padding: '14px 0',
     fontFamily: "ui-monospace, 'Cascadia Code', monospace", fontSize: 12, lineHeight: 1.6,
-    color: T.text, margin: 0,
+    color: T.text, margin: 0, background: '#f8fafc',
   },
   detail: {
     width: 'min(680px, 100%)', maxHeight: 'min(82vh, 760px)', background: T.panel,
     border: `1px solid ${T.border}`, borderRadius: 14, display: 'flex', flexDirection: 'column' as const,
-    overflow: 'hidden',
+    overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,.12)',
   },
   detailBar: {
     display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px',
-    borderBottom: `1px solid ${T.borderSoft}`,
+    borderBottom: `1px solid ${T.borderSoft}`, background: T.panel,
   },
   detailH2: { fontSize: 15.5, fontWeight: 600, color: T.text },
   detailClose: {
-    marginLeft: 'auto', background: 'none', border: `1px solid ${T.border}`, color: T.muted,
+    marginLeft: 'auto', background: T.panel, border: `1px solid ${T.border}`, color: T.muted,
     borderRadius: 7, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
   },
-  detailBody: { overflow: 'auto', padding: '16px 18px 22px' },
+  detailBody: { overflow: 'auto', padding: '16px 18px 22px', background: T.card },
   detailDesc: { fontSize: 13.5, color: T.text, marginBottom: 16 },
   detailH4: { fontSize: 12, color: T.dim, textTransform: 'uppercase' as const, letterSpacing: '0.06em', margin: '16px 0 8px' },
   detailFiles: { display: 'flex', flexWrap: 'wrap' as const, gap: 6 },
@@ -212,7 +263,7 @@ const css = {
   flowlineWho: { color: T.text, whiteSpace: 'nowrap' as const },
   flowlineWhat: { color: T.muted },
   viewInGraph: {
-    marginTop: 12, background: 'none', border: `1px solid ${T.border}`, color: T.accent,
+    marginTop: 12, background: T.accentSoft, border: `1px solid ${T.accent}`, color: T.accent,
     borderRadius: 7, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
   },
 };
@@ -266,6 +317,18 @@ export const ArchitectureView: React.FC = () => {
     return (mod.invoke as (cmd: string, args?: Record<string, unknown>) => Promise<T>)(cmd, args);
   }, []);
 
+  // ── Reveal binary file in explorer ──────────────────────────────────────
+  const revealBinary = useCallback(async (relPath: string) => {
+    if (!projectPath) return;
+    const sep = projectPath.includes('\\') ? '\\' : '/';
+    const fullPath = (projectPath.replace(/[\\/]$/, '') + sep + relPath).replace(/\//g, '\\');
+    try {
+      await invoke('reveal_in_explorer', { path: fullPath });
+    } catch (err) {
+      console.error('[ArchitectureView] reveal_in_explorer failed:', err);
+    }
+  }, [projectPath, invoke]);
+
   // ── Check API key status ─────────────────────────────────────────────────
   useEffect(() => {
     if (!isArchitectureOpen) return;
@@ -281,13 +344,11 @@ export const ArchitectureView: React.FC = () => {
     setError(null);
 
     try {
-      // 1. Try reading existing analysis.json
       let raw: string | null = null;
       try {
         raw = await invoke<string | null>('get_analysis', { path: projectPath });
       } catch { raw = null; }
 
-      // 2. Generate static if not found
       if (!raw) {
         if (!graph) {
           if (isMounted.current) {
@@ -350,7 +411,7 @@ export const ArchitectureView: React.FC = () => {
     return () => window.removeEventListener('keydown', handler);
   }, [isArchitectureOpen, viewerOpen, detailOpen, toggleArchitecture]);
 
-  // ── Draw SVG wires (same algorithm as arch.html drawWires) ───────────────
+  // ── Draw SVG wires ───────────────────────────────────────────────────────
   const drawWires = useCallback(() => {
     const svg = svgRef.current;
     const box = flowboxRef.current;
@@ -360,7 +421,6 @@ export const ArchitectureView: React.FC = () => {
     svg.setAttribute('width', String(boxRect.width));
     svg.setAttribute('height', String(boxRect.height));
 
-    // Remove existing wires (not the <defs>)
     [...svg.querySelectorAll('path.wire')].forEach(p => p.remove());
 
     const boxLeft = boxRect.left;
@@ -400,7 +460,8 @@ export const ArchitectureView: React.FC = () => {
       path.setAttribute('d', d);
       path.setAttribute('class', 'wire');
       path.setAttribute('fill', 'none');
-      path.setAttribute('stroke', T.border);
+      // Light theme arrow: stroke #94a3b8, hover #2563eb
+      path.setAttribute('stroke', '#94a3b8');
       path.setAttribute('stroke-width', '1.5');
       path.setAttribute('marker-end', 'url(#arch-arr)');
       path.style.transition = 'stroke 0.15s, stroke-width 0.15s';
@@ -416,7 +477,6 @@ export const ArchitectureView: React.FC = () => {
 
   useLayoutEffect(() => {
     if (!analysis || !isArchitectureOpen) return;
-    // Give React time to paint cards before drawing wires
     const id = requestAnimationFrame(drawWires);
     return () => cancelAnimationFrame(id);
   }, [analysis, isArchitectureOpen, drawWires]);
@@ -428,19 +488,20 @@ export const ArchitectureView: React.FC = () => {
     return () => window.removeEventListener('resize', handler);
   }, [analysis, isArchitectureOpen, drawWires]);
 
-  // ── Highlight wires on hover (same as arch.html highlightWires) ──────────
+  // ── Highlight wires on hover ─────────────────────────────────────────────
   const highlightWires = useCallback((cidStr: string, on: boolean) => {
     const svg = svgRef.current;
     if (!svg) return;
     svg.querySelectorAll<SVGPathElement>('path.wire').forEach(p => {
       if (p.dataset.src === cidStr || p.dataset.dst === cidStr) {
-        p.setAttribute('stroke', on ? T.accent : T.border);
+        // Light theme: normal #94a3b8, hover #2563eb
+        p.setAttribute('stroke', on ? '#2563eb' : '#94a3b8');
         p.setAttribute('stroke-width', on ? '2.5' : '1.5');
       }
     });
   }, []);
 
-  // ── Open file viewer ─────────────────────────────────────────────────────
+  // ── Open file viewer (text files only) ──────────────────────────────────
   const openFile = useCallback(async (relPath: string, start: number, end: number) => {
     setViewerPath(relPath);
     setViewerStart(start || 1);
@@ -471,6 +532,15 @@ export const ArchitectureView: React.FC = () => {
     }
   }, [projectPath, invoke]);
 
+  // ── Handle chip click: text → viewer, binary → reveal ───────────────────
+  const handleChipClick = useCallback(async (relPath: string, start: number, end: number) => {
+    if (isBinaryFile(relPath)) {
+      await revealBinary(relPath);
+    } else {
+      await openFile(relPath, start, end);
+    }
+  }, [revealBinary, openFile]);
+
   // Scroll highlighted line into center after render
   useEffect(() => {
     if (!viewerOpen || viewerLoading || !viewerCode) return;
@@ -489,7 +559,6 @@ export const ArchitectureView: React.FC = () => {
   // ── "Ver en el grafo →" handler ──────────────────────────────────────────
   const viewInGraph = useCallback((comp: AnalysisComponent) => {
     if (!graph || !comp.key_entities?.length) return;
-    // Find first key_entity whose reference_file matches a node.path in the graph
     for (const entity of (comp.key_entities ?? [])) {
       const refFile = entity.reference_file;
       const matchedNode = graph.nodes.find(n => {
@@ -503,7 +572,6 @@ export const ArchitectureView: React.FC = () => {
         return;
       }
     }
-    // No match found — close view anyway to expose the graph
     toggleArchitecture();
   }, [graph, setSelectedNode, setFocusNode, toggleArchitecture]);
 
@@ -554,18 +622,73 @@ export const ArchitectureView: React.FC = () => {
 
   if (!isArchitectureOpen) return null;
 
-  // ── Build level map ──────────────────────────────────────────────────────
+  // ── Build layout data ────────────────────────────────────────────────────
   const comps = analysis?.components ?? [];
   const rels = analysis?.components_relations ?? [];
   const BYID = new Map<string, AnalysisComponent>(comps.map(c => [cid(c), c]));
-  const levelMap = analysis ? assignLevels(comps, rels) : new Map<string, number>();
+  const hasRelations = rels.length > 0;
+
+  // Topo levels (used when relations exist)
+  const levelMap = hasRelations ? assignLevels(comps, rels) : new Map<string, number>();
   const maxLevel = levelMap.size ? Math.max(...levelMap.values()) : 0;
+
+  // Content-type groups (used when NO relations)
+  const GROUP_ORDER: ContentGroup[] = ['Código', 'Datos', 'Documentación', 'Otros'];
+  const contentGroups: Map<ContentGroup, AnalysisComponent[]> = new Map();
+  if (!hasRelations && comps.length > 0) {
+    for (const comp of comps) {
+      const g = contentGroup(comp);
+      if (!contentGroups.has(g)) contentGroups.set(g, []);
+      contentGroups.get(g)!.push(comp);
+    }
+  }
 
   const projectName = projectPath?.split(/[\\/]/).filter(Boolean).pop() ?? 'Project';
 
   const detailComp = detailCid ? BYID.get(detailCid) : null;
   const detailOuts = detailCid ? rels.filter(r => String(r.src_id) === detailCid) : [];
   const detailIns  = detailCid ? rels.filter(r => String(r.dst_id) === detailCid) : [];
+
+  // ── Chip renderer (text vs binary) ──────────────────────────────────────
+  const renderChip = (e: KeyEntity, i: number, closeDetailFirst?: boolean) => {
+    const binary = isBinaryFile(e.reference_file);
+    if (binary) {
+      // Binary: dimmed, cursor default, no pointer, tooltip "abrir en el explorador"
+      return (
+        <span
+          key={i}
+          className="arch-chip"
+          data-f={e.reference_file}
+          data-l={String(e.reference_start_line ?? 1)}
+          data-e={String(e.reference_end_line ?? 1)}
+          data-binary="1"
+          style={css.chipBinary}
+          title="abrir en el explorador"
+          onClick={async (ev) => {
+            ev.stopPropagation();
+            if (closeDetailFirst) setDetailOpen(false);
+            await revealBinary(e.reference_file);
+          }}
+        >
+          {e.reference_file}
+        </span>
+      );
+    }
+    // Text: normal clickable chip
+    return (
+      <span
+        key={i}
+        className="arch-chip"
+        data-f={e.reference_file}
+        data-l={String(e.reference_start_line ?? 1)}
+        data-e={String(e.reference_end_line ?? 1)}
+        style={css.chip}
+        title="ver código"
+      >
+        {e.reference_file}:{e.reference_start_line ?? 1}
+      </span>
+    );
+  };
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -643,8 +766,8 @@ export const ArchitectureView: React.FC = () => {
             <div style={css.state}>No hay datos de organigrama todavía.</div>
           )}
 
-          {/* Flowbox with SVG wires + level cards */}
-          {!loading && !error && analysis && (
+          {/* ── CASE A: Analysis with relations → topo levels + SVG wires ── */}
+          {!loading && !error && analysis && hasRelations && (
             <div style={css.flowbox} ref={flowboxRef}>
               {/* SVG wires layer */}
               <svg
@@ -665,7 +788,7 @@ export const ArchitectureView: React.FC = () => {
                     <path
                       d="M2 1L8 5L2 9"
                       fill="none"
-                      stroke={T.border}
+                      stroke="#94a3b8"
                       strokeWidth="1.6"
                       strokeLinecap="round"
                     />
@@ -706,15 +829,20 @@ export const ArchitectureView: React.FC = () => {
                                 (e.currentTarget as HTMLDivElement).style.borderColor = T.border;
                                 highlightWires(cidStr, false);
                               }}
-                              onClick={e => {
+                              onClick={async (e) => {
                                 const chip = (e.target as HTMLElement).closest('.arch-chip') as HTMLElement | null;
                                 if (chip) {
                                   e.stopPropagation();
-                                  openFile(
-                                    chip.dataset.f ?? '',
-                                    parseInt(chip.dataset.l ?? '1', 10),
-                                    parseInt(chip.dataset.e ?? '1', 10),
-                                  );
+                                  const isBin = chip.dataset.binary === '1';
+                                  if (isBin) {
+                                    await revealBinary(chip.dataset.f ?? '');
+                                  } else {
+                                    await handleChipClick(
+                                      chip.dataset.f ?? '',
+                                      parseInt(chip.dataset.l ?? '1', 10),
+                                      parseInt(chip.dataset.e ?? '1', 10),
+                                    );
+                                  }
                                   return;
                                 }
                                 openDetail(cidStr);
@@ -726,18 +854,7 @@ export const ArchitectureView: React.FC = () => {
                                 {(comp.description || '').length > 140 ? '…' : ''}
                               </div>
                               <div style={css.nodeFiles}>
-                                {entities.slice(0, 6).map((e, i) => (
-                                  <span
-                                    key={i}
-                                    className="arch-chip"
-                                    data-f={e.reference_file}
-                                    data-l={String(e.reference_start_line ?? 1)}
-                                    data-e={String(e.reference_end_line ?? 1)}
-                                    style={css.chip}
-                                  >
-                                    {e.reference_file}:{e.reference_start_line ?? 1}
-                                  </span>
-                                ))}
+                                {entities.slice(0, 6).map((en, i) => renderChip(en, i))}
                               </div>
                               <div style={css.nodeMore}>ficha completa y flujo →</div>
                             </div>
@@ -751,7 +868,79 @@ export const ArchitectureView: React.FC = () => {
             </div>
           )}
 
-          {/* "El flujo, paso a paso" */}
+          {/* ── CASE B: Analysis with 0 relations → content-type grouping ── */}
+          {!loading && !error && analysis && !hasRelations && comps.length > 0 && (
+            <>
+              <div style={css.noFlowNotice}>
+                Sin flujos detectados — agrupación por tipo de contenido
+              </div>
+              <div style={css.flow}>
+                {GROUP_ORDER.filter(g => contentGroups.has(g)).map((g, idx) => {
+                  const group = contentGroups.get(g) ?? [];
+                  return (
+                    <div
+                      key={g}
+                      style={{ ...css.level, ...(idx > 0 ? css.levelGap : {}) }}
+                    >
+                      <span style={css.levelLabel}>{g}</span>
+                      <div style={css.cards}>
+                        {group.map(comp => {
+                          const entities = comp.key_entities ?? [];
+                          const cidStr = cid(comp);
+                          return (
+                            <div
+                              key={cidStr}
+                              className="arch-node"
+                              data-cid={cidStr}
+                              style={css.node}
+                              onMouseEnter={e => {
+                                (e.currentTarget as HTMLDivElement).style.background = T.cardHover;
+                                (e.currentTarget as HTMLDivElement).style.borderColor = T.accent;
+                              }}
+                              onMouseLeave={e => {
+                                (e.currentTarget as HTMLDivElement).style.background = T.card;
+                                (e.currentTarget as HTMLDivElement).style.borderColor = T.border;
+                              }}
+                              onClick={async (e) => {
+                                const chip = (e.target as HTMLElement).closest('.arch-chip') as HTMLElement | null;
+                                if (chip) {
+                                  e.stopPropagation();
+                                  const isBin = chip.dataset.binary === '1';
+                                  if (isBin) {
+                                    await revealBinary(chip.dataset.f ?? '');
+                                  } else {
+                                    await handleChipClick(
+                                      chip.dataset.f ?? '',
+                                      parseInt(chip.dataset.l ?? '1', 10),
+                                      parseInt(chip.dataset.e ?? '1', 10),
+                                    );
+                                  }
+                                  return;
+                                }
+                                openDetail(cidStr);
+                              }}
+                            >
+                              <div style={css.nodeH3}>{comp.name}</div>
+                              <div style={css.nodeP}>
+                                {(comp.description || '').slice(0, 140)}
+                                {(comp.description || '').length > 140 ? '…' : ''}
+                              </div>
+                              <div style={css.nodeFiles}>
+                                {entities.slice(0, 6).map((en, i) => renderChip(en, i))}
+                              </div>
+                              <div style={css.nodeMore}>ficha completa →</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* "El flujo, paso a paso" — only when relations exist */}
           {!loading && !error && analysis && rels.length > 0 && (
             <div style={css.rels}>
               <h2 style={css.relsH2}>El flujo, paso a paso</h2>
@@ -795,7 +984,7 @@ export const ArchitectureView: React.FC = () => {
                 <span style={{ display: 'block', padding: '0 16px', color: T.muted }}>Cargando…</span>
               )}
               {!viewerLoading && !viewerCode && (
-                <span style={{ display: 'block', padding: '0 16px', color: '#f87171' }}>
+                <span style={{ display: 'block', padding: '0 16px', color: '#dc2626' }}>
                   No se pudo cargar el archivo.
                 </span>
               )}
@@ -816,7 +1005,8 @@ export const ArchitectureView: React.FC = () => {
                         display: 'block',
                         padding: '0 16px 0 0',
                         whiteSpace: 'pre',
-                        background: hl ? T.accentSoft : 'transparent',
+                        // Highlighted line: #dbeafe (accentSoft), normal: transparent
+                        background: hl ? '#dbeafe' : 'transparent',
                       }}
                     >
                       <span style={{
@@ -858,22 +1048,41 @@ export const ArchitectureView: React.FC = () => {
                     Archivos ({(detailComp.key_entities ?? []).length})
                   </div>
                   <div style={css.detailFiles}>
-                    {(detailComp.key_entities ?? []).map((e, i) => (
-                      <button
-                        key={i}
-                        style={css.chip}
-                        onClick={() => {
-                          setDetailOpen(false);
-                          openFile(
-                            e.reference_file,
-                            e.reference_start_line ?? 1,
-                            e.reference_end_line ?? 1,
-                          );
-                        }}
-                      >
-                        {e.reference_file}:{e.reference_start_line ?? 1}
-                      </button>
-                    ))}
+                    {(detailComp.key_entities ?? []).map((e, i) => {
+                      const binary = isBinaryFile(e.reference_file);
+                      if (binary) {
+                        return (
+                          <span
+                            key={i}
+                            style={{ ...css.chipBinary, cursor: 'default' }}
+                            title="abrir en el explorador"
+                            onClick={async () => {
+                              setDetailOpen(false);
+                              await revealBinary(e.reference_file);
+                            }}
+                          >
+                            {e.reference_file}
+                          </span>
+                        );
+                      }
+                      return (
+                        <button
+                          key={i}
+                          style={css.chip}
+                          title="ver código"
+                          onClick={() => {
+                            setDetailOpen(false);
+                            void openFile(
+                              e.reference_file,
+                              e.reference_start_line ?? 1,
+                              e.reference_end_line ?? 1,
+                            );
+                          }}
+                        >
+                          {e.reference_file}:{e.reference_start_line ?? 1}
+                        </button>
+                      );
+                    })}
                   </div>
                 </>
               )}
