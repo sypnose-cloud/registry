@@ -6,11 +6,11 @@
 <title>Organigrama — Sypnose Registry</title>
 <style>
   :root {
-    --bg: #0b0e14; --panel: #121722; --card: #171e2b; --card-hover: #1d2636;
-    --border: #263042; --border-soft: #1c2433;
-    --text: #d7dde8; --muted: #8b95a7; --dim: #5c6678;
-    --accent: #4da3ff; --accent-soft: #163050;
-    --ok: #3fb68b;
+    --bg:#ffffff; --panel:#f8fafc; --card:#ffffff; --card-hover:#f1f5f9;
+    --border:#e2e8f0; --border-soft:#e5e7eb;
+    --text:#111827; --muted:#6b7280; --dim:#9ca3af;
+    --accent:#2563eb; --accent-soft:#dbeafe;
+    --ok:#059669; --ok-soft:#d1fae5;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, 'Segoe UI', Roboto, sans-serif; min-height: 100vh; }
@@ -24,7 +24,7 @@
     margin-left: auto; color: var(--accent); text-decoration: none; font-size: 13px;
     border: 1px solid var(--border); padding: 6px 12px; border-radius: 8px;
   }
-  header a.back:hover { background: var(--card); }
+  header a.back:hover { background: var(--card-hover); }
   .wrap { max-width: 1020px; margin: 0 auto; padding: 26px 22px 60px; }
   .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
   .meta b { color: var(--text); font-weight: 600; }
@@ -32,8 +32,8 @@
 
   .flowbox { position: relative; }
   #wires { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: visible; }
-  #wires path { fill: none; stroke: var(--border); stroke-width: 1.5; transition: stroke .15s, stroke-width .15s; }
-  #wires path.hot { stroke: var(--accent); stroke-width: 2.5; }
+  #wires path { fill: none; stroke: #94a3b8; stroke-width: 1.5; transition: stroke .15s, stroke-width .15s; }
+  #wires path.hot { stroke: #2563eb; stroke-width: 2.5; }
   .flow { display: flex; flex-direction: column; position: relative; z-index: 2; }
   .level {
     border: 1px solid var(--border-soft); border-radius: 16px; padding: 18px;
@@ -49,17 +49,28 @@
   .node {
     background: var(--card); border: 1px solid var(--border); border-radius: 12px;
     padding: 13px 15px; cursor: pointer; transition: background .12s, border-color .12s;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
   }
   .node:hover { background: var(--card-hover); border-color: var(--accent); }
   .node h3 { font-size: 14.5px; font-weight: 600; margin-bottom: 4px; }
   .node p { font-size: 12.5px; color: var(--muted); }
   .node .files { margin-top: 9px; display: flex; flex-wrap: wrap; gap: 5px; }
   .node .more { font-size: 11px; color: var(--accent); margin-top: 7px; }
+
+  /* chip texto — clicable */
   .chip {
     font: 11px/1 ui-monospace, 'Cascadia Code', monospace; color: var(--accent);
     background: var(--accent-soft); border-radius: 6px; padding: 4px 7px;
+    cursor: pointer;
   }
   .chip:hover { text-decoration: underline; }
+
+  /* chip binario — NO clicable */
+  .chip-bin {
+    font: 11px/1 ui-monospace, 'Cascadia Code', monospace; color: var(--dim);
+    background: var(--panel); border-radius: 6px; padding: 4px 7px;
+    cursor: default; border: 1px solid var(--border-soft);
+  }
 
   .rels { margin-top: 34px; }
   .rels h2 { font-size: 14px; color: var(--muted); font-weight: 600; margin-bottom: 12px; letter-spacing: .05em; text-transform: uppercase; }
@@ -72,14 +83,14 @@
   .rel .what { color: var(--muted); }
 
   .overlay {
-    position: fixed; inset: 0; background: rgba(4,7,12,.78); display: none;
+    position: fixed; inset: 0; background: rgba(15,23,42,.35); display: none;
     align-items: center; justify-content: center; z-index: 50; padding: 30px;
   }
   .overlay.open { display: flex; }
   .viewer {
     width: min(960px, 100%); height: min(80vh, 720px); background: var(--panel);
     border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column;
-    overflow: hidden;
+    overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
   }
   .viewer .bar {
     display: flex; align-items: center; gap: 10px; padding: 10px 16px;
@@ -91,19 +102,19 @@
   }
   .viewer pre {
     flex: 1; overflow: auto; padding: 14px 0; font: 12px/1.6 ui-monospace, 'Cascadia Code', monospace;
-    color: var(--text);
+    color: #111827; background: #f8fafc;
   }
   .viewer pre .ln { display: block; padding: 0 16px 0 0; white-space: pre; }
   .viewer pre .ln .no {
     display: inline-block; width: 52px; text-align: right; padding-right: 14px;
     color: var(--dim); user-select: none;
   }
-  .viewer pre .ln.hl { background: var(--accent-soft); }
+  .viewer pre .ln.hl { background: #dbeafe; }
 
   .detail {
     width: min(680px, 100%); max-height: min(82vh, 760px); background: var(--panel);
     border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column;
-    overflow: hidden;
+    overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08);
   }
   .detail .bar {
     display: flex; align-items: center; gap: 10px; padding: 12px 18px;
@@ -126,6 +137,12 @@
   .detail .flowline .who { color: var(--text); white-space: nowrap; }
   .detail .flowline .what { color: var(--muted); }
   .state { text-align: center; color: var(--muted); padding: 80px 20px; font-size: 14px; }
+
+  /* aviso modo sin-flujos */
+  .no-flows-notice {
+    background: var(--accent-soft); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 16px; font-size: 13px; color: var(--accent); margin-bottom: 18px;
+  }
 </style>
 </head>
 <body>
@@ -169,6 +186,31 @@ let COMPS = [], RELS = [], BYID = {};
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
+// Extensiones de archivos binarios — no visualizables
+const BIN_EXTS = new Set([
+  'wav','mp3','ogg','png','jpg','jpeg','gif','ico','svg',
+  'pkl','bin','exe','dll','zip','7z','pdf','onnx','pt',
+  'safetensors','msix','db','sqlite'
+]);
+
+function isBinary(filename) {
+  if (!filename) return false;
+  const dot = filename.lastIndexOf('.');
+  if (dot === -1) return true; // sin extension conocida de texto
+  const ext = filename.slice(dot + 1).toLowerCase();
+  return BIN_EXTS.has(ext);
+}
+
+function chipHtml(e) {
+  const f = e.reference_file || '';
+  const ls = e.reference_start_line || 1;
+  const le = e.reference_end_line || 1;
+  if (isBinary(f)) {
+    return `<span class="chip-bin" title="archivo de datos — no visualizable">${esc(f)}</span>`;
+  }
+  return `<span class="chip" data-f="${esc(f)}" data-l="${ls}" data-e="${le}">${esc(f)}:${ls}</span>`;
+}
+
 function fetchText(url) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
@@ -208,8 +250,74 @@ function assignLevels(comps, rels) {
 
 const LABELS = ['Entrada', 'Núcleo', 'Superficies', 'Nivel 4', 'Nivel 5', 'Nivel 6', 'Otros'];
 
-function chipHtml(e) {
-  return `<span class="chip" data-f="${esc(e.reference_file)}" data-l="${e.reference_start_line || 1}" data-e="${e.reference_end_line || 1}">${esc(e.reference_file)}:${e.reference_start_line || 1}</span>`;
+// Detecta tipo de componente por extensiones de sus key_entities
+function detectTypeLabel(comp) {
+  const ents = comp.key_entities || [];
+  const CODE_EXTS = new Set(['js','ts','jsx','tsx','py','rb','go','rs','java','cs','cpp','c','h','php','swift','kt','scala','sh','bash','zsh','fish','ps1','lua','r','m','ex','exs','erl','hrl','clj','cljs','hs','elm','ml','fs','fsx','vue','svelte','astro']);
+  const DOC_EXTS = new Set(['md','txt','rst','adoc','html','htm','xml','yaml','yml','toml','ini','cfg','conf','json','lock']);
+  let code = 0, data = 0, doc = 0, noext = 0;
+  ents.forEach(e => {
+    const f = e.reference_file || '';
+    const dot = f.lastIndexOf('.');
+    if (dot === -1) { noext++; return; }
+    const ext = f.slice(dot + 1).toLowerCase();
+    if (CODE_EXTS.has(ext)) code++;
+    else if (DOC_EXTS.has(ext)) doc++;
+    else data++;
+  });
+  if (code >= data && code >= doc) return 'Código';
+  if (doc > code && doc >= data) return 'Documentación';
+  return 'Datos';
+}
+
+function renderNoFlowsGrouped(comps, flow) {
+  // Aviso
+  const notice = document.createElement('div');
+  notice.className = 'no-flows-notice';
+  notice.textContent = 'Sin flujos detectados — agrupación por tipo';
+  flow.appendChild(notice);
+
+  // Agrupar por tipo
+  const groups = {};
+  comps.forEach(c => {
+    const label = detectTypeLabel(c);
+    if (!groups[label]) groups[label] = [];
+    groups[label].push(c);
+  });
+
+  const order = ['Código', 'Documentación', 'Datos'];
+  order.forEach(label => {
+    const group = groups[label];
+    if (!group || !group.length) return;
+    const lvl = document.createElement('div');
+    lvl.className = 'level';
+    lvl.dataset.label = label;
+    const cards = document.createElement('div');
+    cards.className = 'cards';
+    group.forEach(c => cards.appendChild(buildCard(c)));
+    lvl.appendChild(cards);
+    flow.appendChild(lvl);
+  });
+}
+
+function buildCard(c) {
+  const ents = c.key_entities || [];
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.dataset.cid = String(c.component_id);
+  el.innerHTML = `<h3>${esc(c.name)}</h3><p>${esc((c.description || '').slice(0, 140))}${(c.description || '').length > 140 ? '…' : ''}</p>` +
+    `<div class="files">${ents.slice(0, 6).map(chipHtml).join('')}</div>` +
+    `<div class="more">ficha completa y flujo →</div>`;
+  el.addEventListener('click', ev => {
+    const chip = ev.target.closest('.chip');
+    if (chip) { ev.stopPropagation(); return openFile(chip.dataset.f, +chip.dataset.l, +chip.dataset.e); }
+    // chip-bin clicks do nothing (cursor:default handles visual, but prevent detail open)
+    if (ev.target.closest('.chip-bin')) { ev.stopPropagation(); return; }
+    openDetail(String(c.component_id));
+  });
+  el.addEventListener('mouseenter', () => highlightWires(String(c.component_id), true));
+  el.addEventListener('mouseleave', () => highlightWires(String(c.component_id), false));
+  return el;
 }
 
 async function main() {
@@ -231,38 +339,27 @@ async function main() {
   document.getElementById('hint').textContent =
     'Clic en una tarjeta = ficha del componente y su flujo · clic en un archivo = código real · pasa el ratón para iluminar las flechas';
 
-  const level = assignLevels(COMPS, RELS);
-  const maxL = Math.max(...Object.values(level));
   const flow = document.getElementById('flow');
   flow.innerHTML = '';
 
-  for (let L = 0; L <= maxL; L++) {
-    const group = COMPS.filter(c => level[String(c.component_id)] === L);
-    if (!group.length) continue;
-    const lvl = document.createElement('div');
-    lvl.className = 'level';
-    lvl.dataset.label = LABELS[Math.min(L, LABELS.length - 1)];
-    const cards = document.createElement('div');
-    cards.className = 'cards';
-    group.forEach(c => {
-      const ents = c.key_entities || [];
-      const el = document.createElement('div');
-      el.className = 'node';
-      el.dataset.cid = String(c.component_id);
-      el.innerHTML = `<h3>${esc(c.name)}</h3><p>${esc((c.description || '').slice(0, 140))}${(c.description || '').length > 140 ? '…' : ''}</p>` +
-        `<div class="files">${ents.slice(0, 6).map(chipHtml).join('')}</div>` +
-        `<div class="more">ficha completa y flujo →</div>`;
-      el.addEventListener('click', ev => {
-        const chip = ev.target.closest('.chip');
-        if (chip) { ev.stopPropagation(); return openFile(chip.dataset.f, +chip.dataset.l, +chip.dataset.e); }
-        openDetail(String(c.component_id));
-      });
-      el.addEventListener('mouseenter', () => highlightWires(String(c.component_id), true));
-      el.addEventListener('mouseleave', () => highlightWires(String(c.component_id), false));
-      cards.appendChild(el);
-    });
-    lvl.appendChild(cards);
-    flow.appendChild(lvl);
+  if (RELS.length === 0) {
+    // Sin relaciones — agrupar por tipo de contenido
+    renderNoFlowsGrouped(COMPS, flow);
+  } else {
+    const level = assignLevels(COMPS, RELS);
+    const maxL = Math.max(...Object.values(level));
+    for (let L = 0; L <= maxL; L++) {
+      const group = COMPS.filter(c => level[String(c.component_id)] === L);
+      if (!group.length) continue;
+      const lvl = document.createElement('div');
+      lvl.className = 'level';
+      lvl.dataset.label = LABELS[Math.min(L, LABELS.length - 1)];
+      const cards = document.createElement('div');
+      cards.className = 'cards';
+      group.forEach(c => cards.appendChild(buildCard(c)));
+      lvl.appendChild(cards);
+      flow.appendChild(lvl);
+    }
   }
 
   const relsEl = document.getElementById('rels');
@@ -348,6 +445,7 @@ function openDetail(cid) {
     chip.style.cursor = 'pointer';
     chip.addEventListener('click', () => { closeDetail(); openFile(chip.dataset.f, +chip.dataset.l, +chip.dataset.e); });
   });
+  // chip-bin inside detail: no click handler, cursor already default from CSS
   document.getElementById('doverlay').classList.add('open');
 }
 function closeDetail() { document.getElementById('doverlay').classList.remove('open'); }
