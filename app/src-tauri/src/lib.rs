@@ -424,9 +424,18 @@ fn open_strategy(path: &str) -> OpenStrategy {
 
 /// M10: Read `.codeboarding/analysis.json` (CodeBoarding interop) or `graphify-out/analysis.json`
 /// (app-generated). Returns raw JSON or null if neither exists.
+///
+/// `graph_json` (optional): when supplied and the stored analysis has <2 relations,
+/// static import relations derived from the graph are merged in-memory (disk not touched).
+/// Passing `None` (or omitting the arg from JS) preserves the previous exact behaviour.
+///
+/// **Front-end activation line (Agent B / ArchitectureView.tsx):**
+/// Change the `invoke("get_analysis", { path })` call to:
+///   `invoke("get_analysis", { path, graphJson: graphJsonString })`
+/// where `graphJsonString` is the graph JSON string already held in component state.
 #[tauri::command]
-fn get_analysis(path: String) -> Option<String> {
-    analysis::get_analysis(&path)
+fn get_analysis(path: String, graph_json: Option<String>) -> Option<String> {
+    analysis::get_analysis(&path, graph_json.as_deref())
 }
 
 /// M10: Generate (or regenerate) a CodeBoarding-schema analysis.json from the indexed graph.

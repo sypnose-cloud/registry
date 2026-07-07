@@ -36,6 +36,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // ─────────────────────────────────────────────────────────────
+// Path normalisation helper (shared across merge + build)
+// ─────────────────────────────────────────────────────────────
+
+/// Normalise a file path so that `/`- and `\`-separated versions compare equal.
+fn normalise_path(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+// ─────────────────────────────────────────────────────────────
 // Schema types (CodeBoarding contract)
 // ─────────────────────────────────────────────────────────────
 
@@ -79,30 +88,169 @@ pub struct Analysis {
 /// Read `<path>/.codeboarding/analysis.json` if it exists (interop with external
 /// CodeBoarding/CI); falls back to `<path>/graphify-out/analysis.json` (generated
 /// by this app). Returns the raw JSON string or None if neither exists.
-pub fn get_analysis(path: &str) -> Option<String> {
+///
+/// ## On-the-fly merge (graph_json is Some)
+///
+/// When the caller supplies `graph_json` **and** the stored analysis has fewer
+/// than 2 `components_relations` entries, this function derives additional
+/// `imports` relations by:
+/// 1. Mapping each `key_entity.reference_file` → the component it belongs to
+///    (path normalised: `/` == `\`).
+/// 2. Walking every `type = "imports"` edge in the graph, resolving source/target
+///    node `path` → component id.
+/// 3. Aggregating cross-component import counts.
+/// 4. Appending the resulting relations to the in-memory analysis and returning
+///    the enriched JSON.
+///
+/// **The file on disk is never modified by this function.** The merge lives only
+/// in the returned string.
+///
+/// Backward-compat: passing `None` preserves the previous behaviour exactly.
+pub fn get_analysis(path: &str, graph_json: Option<&str>) -> Option<String> {
     let root = Path::new(path);
 
-    // 1. External CodeBoarding (priority)
-    let codeboarding = root.join(".codeboarding").join("analysis.json");
-    if codeboarding.exists() {
-        if let Ok(s) = fs::read_to_string(&codeboarding) {
-            if !s.trim().is_empty() {
-                return Some(s);
-            }
+    // ── 1. Read raw JSON from disk ─────────────────────────────
+    let raw = {
+        let codeboarding = root.join(".codeboarding").join("analysis.json");
+        if codeboarding.exists() {
+            if let Ok(s) = fs::read_to_string(&codeboarding) {
+                if !s.trim().is_empty() { Some(s) } else { None }
+            } else { None }
+        } else {
+            None
+        }
+    }.or_else(|| {
+        let app_generated = root.join("graphify-out").join("analysis.json");
+        if app_generated.exists() {
+            if let Ok(s) = fs::read_to_string(&app_generated) {
+                if !s.trim().is_empty() { Some(s) } else { None }
+            } else { None }
+        } else {
+            None
+        }
+    })?;
+
+    // ── 2. If no graph or already >=2 relations → return as-is ─
+    let graph_str = match graph_json {
+        Some(g) if !g.trim().is_empty() => g,
+        _ => return Some(raw),
+    };
+
+    // Parse stored analysis — on any parse error return raw unchanged.
+    let mut analysis: Analysis = match serde_json::from_str(&raw) {
+        Ok(a) => a,
+        Err(_) => return Some(raw),
+    };
+
+    if analysis.components_relations.len() >= 2 {
+        return Some(raw);
+    }
+
+    // ── 3. Merge static relations from graph ───────────────────
+    if let Some(merged) = merge_relations_from_graph(&mut analysis, graph_str) {
+        serde_json::to_string_pretty(&merged).ok().or(Some(raw))
+    } else {
+        Some(raw)
+    }
+}
+
+/// Derive cross-component `imports` relations from `graph_json` and append them
+/// to `analysis.components_relations` (which had <2 entries).
+/// Returns `Some(&Analysis)` after mutation, or `None` if the graph is unparseable
+/// or yields no new relations (caller should fall back to raw).
+fn merge_relations_from_graph<'a>(analysis: &'a mut Analysis, graph_str: &str) -> Option<&'a Analysis> {
+    let graph: Value = serde_json::from_str(graph_str).ok()?;
+
+    let nodes = graph.get("nodes").and_then(|n| n.as_array())?;
+    let edges = graph.get("edges").and_then(|e| e.as_array())?;
+
+    // ── Build: normalised_path → component_id ─────────────────
+    // For each component, map all its key_entity paths to that component id.
+    let mut path_to_comp: HashMap<String, String> = HashMap::new();
+    for comp in &analysis.components {
+        let cid = match &comp.component_id {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        };
+        for entity in &comp.key_entities {
+            let norm = normalise_path(&entity.reference_file);
+            path_to_comp.insert(norm, cid.clone());
         }
     }
 
-    // 2. App-generated
-    let app_generated = root.join("graphify-out").join("analysis.json");
-    if app_generated.exists() {
-        if let Ok(s) = fs::read_to_string(&app_generated) {
-            if !s.trim().is_empty() {
-                return Some(s);
-            }
+    // ── Build: node_id → normalised_path ──────────────────────
+    let mut node_path: HashMap<String, String> = HashMap::new();
+    for node in nodes {
+        if let (Some(id), Some(p)) = (
+            node.get("id").and_then(|v| v.as_str()),
+            node.get("path").and_then(|v| v.as_str()),
+        ) {
+            node_path.insert(id.to_string(), normalise_path(p));
         }
     }
 
-    None
+    // ── Walk edges, count cross-component imports ──────────────
+    let mut cross: HashMap<(String, String), usize> = HashMap::new();
+    for edge in edges {
+        if edge.get("type").and_then(|v| v.as_str()) != Some("imports") {
+            continue;
+        }
+        let src_id = edge.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        let tgt_id = edge.get("target").and_then(|v| v.as_str()).unwrap_or("");
+
+        let src_path = match node_path.get(src_id) { Some(p) => p, None => continue };
+        let tgt_path = match node_path.get(tgt_id) { Some(p) => p, None => continue };
+
+        let src_comp = match path_to_comp.get(src_path.as_str()) { Some(c) => c.clone(), None => continue };
+        let tgt_comp = match path_to_comp.get(tgt_path.as_str()) { Some(c) => c.clone(), None => continue };
+
+        if src_comp != tgt_comp {
+            *cross.entry((src_comp, tgt_comp)).or_insert(0) += 1;
+        }
+    }
+
+    if cross.is_empty() {
+        return None; // nothing to add
+    }
+
+    // Build a quick lookup: component_id → name (for src_name/dst_name)
+    let id_to_name: HashMap<String, String> = analysis.components.iter().map(|c| {
+        let cid = match &c.component_id {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            other => serde_json::to_string(other).unwrap_or_default(),
+        };
+        (cid, c.name.clone())
+    }).collect();
+
+    // Collect existing relation pairs so we don't duplicate
+    let existing: std::collections::HashSet<(String, String)> = analysis.components_relations.iter()
+        .map(|r| {
+            let s = match &r.src_id { Value::String(s) => s.clone(), Value::Number(n) => n.to_string(), other => serde_json::to_string(other).unwrap_or_default() };
+            let d = match &r.dst_id { Value::String(s) => s.clone(), Value::Number(n) => n.to_string(), other => serde_json::to_string(other).unwrap_or_default() };
+            (s, d)
+        })
+        .collect();
+
+    let mut added = false;
+    for ((src_comm, dst_comm), count) in &cross {
+        if existing.contains(&(src_comm.clone(), dst_comm.clone())) {
+            continue;
+        }
+        let src_name = id_to_name.get(src_comm).cloned();
+        let dst_name = id_to_name.get(dst_comm).cloned();
+        analysis.components_relations.push(AnalysisRelation {
+            src_id: Value::String(src_comm.clone()),
+            dst_id: Value::String(dst_comm.clone()),
+            src_name,
+            dst_name,
+            relation: format!("imports (x{})", count),
+        });
+        added = true;
+    }
+
+    if added { Some(analysis) } else { None }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -675,14 +823,14 @@ mod tests {
         fs::write(root.join("graphify-out").join("analysis.json"), r#"{"components":[],"components_relations":[],"_source":"app"}"#).unwrap();
 
         // Without .codeboarding — should read graphify-out
-        let r = get_analysis(root.to_str().unwrap());
+        let r = get_analysis(root.to_str().unwrap(), None);
         assert!(r.is_some());
         assert!(r.as_ref().unwrap().contains("app"));
 
         // With .codeboarding — should prefer it
         fs::create_dir_all(root.join(".codeboarding")).unwrap();
         fs::write(root.join(".codeboarding").join("analysis.json"), r#"{"components":[],"components_relations":[],"_source":"codeboarding"}"#).unwrap();
-        let r2 = get_analysis(root.to_str().unwrap());
+        let r2 = get_analysis(root.to_str().unwrap(), None);
         assert!(r2.is_some());
         assert!(r2.as_ref().unwrap().contains("codeboarding"), "should prefer .codeboarding: {:?}", r2);
     }
@@ -717,5 +865,116 @@ mod tests {
         let path = dir.path().to_str().unwrap();
         let result = generate_analysis(path, test_graph()).await;
         assert!(result.is_ok(), "static fallback must always succeed: {:?}", result.err());
+    }
+
+    // ── Merge tests ─────────────────────────────────────────────────────────────
+
+    /// Graph with 2-component imports: stored analysis has 0 relations → merge
+    /// must produce >=1 relation.
+    #[test]
+    fn merge_produces_relation_when_zero_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        // Analysis with 2 components, each referencing 1 file, 0 relations
+        let analysis_json = r#"{
+            "components": [
+                {
+                    "component_id": "0",
+                    "name": "Rust Core",
+                    "description": "Core",
+                    "key_entities": [{"reference_file":"src/main.rs","reference_start_line":1,"reference_end_line":1}]
+                },
+                {
+                    "component_id": "1",
+                    "name": "Web",
+                    "description": "Web",
+                    "key_entities": [{"reference_file":"web/app.ts","reference_start_line":1,"reference_end_line":1}]
+                }
+            ],
+            "components_relations": []
+        }"#;
+
+        // Graph: web/app.ts imports src/main.rs (cross-component edge)
+        let graph_json = r#"{
+            "nodes":[
+                {"id":"n1","type":"file","path":"src/main.rs","community":0},
+                {"id":"n2","type":"file","path":"web/app.ts","community":1}
+            ],
+            "edges":[
+                {"id":"e0","source":"n2","target":"n1","type":"imports"}
+            ],
+            "metadata":{}
+        }"#;
+
+        fs::create_dir_all(root.join(".codeboarding")).unwrap();
+        fs::write(root.join(".codeboarding").join("analysis.json"), analysis_json).unwrap();
+
+        let result = get_analysis(root.to_str().unwrap(), Some(graph_json));
+        assert!(result.is_some(), "should return Some");
+        let val: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        let rels = val["components_relations"].as_array().unwrap();
+        assert!(rels.len() >= 1, "merge must produce >=1 relation, got 0");
+    }
+
+    /// Analysis already has >=2 relations → get_analysis must NOT touch them
+    /// (no extra merge, returned JSON unchanged for relations field).
+    #[test]
+    fn no_merge_when_two_or_more_relations_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let analysis_json = r#"{
+            "components": [
+                {
+                    "component_id": "0", "name": "A", "description": "A",
+                    "key_entities": [{"reference_file":"a.rs","reference_start_line":1,"reference_end_line":1}]
+                },
+                {
+                    "component_id": "1", "name": "B", "description": "B",
+                    "key_entities": [{"reference_file":"b.rs","reference_start_line":1,"reference_end_line":1}]
+                }
+            ],
+            "components_relations": [
+                {"src_id":"0","dst_id":"1","relation":"imports (x2)"},
+                {"src_id":"1","dst_id":"0","relation":"imports (x1)"}
+            ]
+        }"#;
+
+        let graph_json = r#"{
+            "nodes":[
+                {"id":"n1","type":"file","path":"a.rs","community":0},
+                {"id":"n2","type":"file","path":"b.rs","community":1}
+            ],
+            "edges":[{"id":"e0","source":"n1","target":"n2","type":"imports"}],
+            "metadata":{}
+        }"#;
+
+        fs::create_dir_all(root.join(".codeboarding")).unwrap();
+        fs::write(root.join(".codeboarding").join("analysis.json"), analysis_json).unwrap();
+
+        let result = get_analysis(root.to_str().unwrap(), Some(graph_json));
+        assert!(result.is_some());
+        let val: Value = serde_json::from_str(&result.unwrap()).unwrap();
+        let rels = val["components_relations"].as_array().unwrap();
+        // Must stay exactly 2 — no extra merge
+        assert_eq!(rels.len(), 2, "relations must remain 2 when already >=2, got {}", rels.len());
+    }
+
+    /// No graph supplied → response is identical to what is stored on disk.
+    #[test]
+    fn no_graph_returns_raw_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+
+        let analysis_json = r#"{"components":[],"components_relations":[],"_marker":"intact"}"#;
+        fs::create_dir_all(root.join(".codeboarding")).unwrap();
+        fs::write(root.join(".codeboarding").join("analysis.json"), analysis_json).unwrap();
+
+        let result = get_analysis(root.to_str().unwrap(), None);
+        assert!(result.is_some(), "should return Some even without graph");
+        let s = result.unwrap();
+        // The raw string must contain our marker — no transformation applied
+        assert!(s.contains("intact"), "content must be returned as-is when no graph: got {:?}", s);
     }
 }
