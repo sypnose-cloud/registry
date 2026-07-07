@@ -66,6 +66,8 @@ const IGNORE_DIRS: &[&str] = &[
     "$recycle.bin", "system volume information",
     // Our own output
     ".brain", ".claude", "graphify-out",
+    // CodeBoarding external analysis — must not trigger re-index loop when CI/CodeBoarding writes here
+    ".codeboarding",
 ];
 
 const MAX_FILES: usize = 50_000;

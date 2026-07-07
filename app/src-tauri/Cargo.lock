@@ -3737,7 +3737,7 @@ dependencies = [
 
 [[package]]
 name = "sypnose-registry"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "chrono",
  "dirs",
@@ -3751,6 +3751,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
+ "tempfile",
  "tiny_http",
  "tokio",
 ]

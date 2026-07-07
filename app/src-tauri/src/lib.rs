@@ -6,6 +6,7 @@ mod chat;
 mod export;
 mod open_notebook;
 mod architecture;
+mod analysis;
 
 use std::fs;
 use std::path::PathBuf;
@@ -418,6 +419,31 @@ fn open_strategy(path: &str) -> OpenStrategy {
 }
 
 // ─────────────────────────────────────────────────────────────
+// M10: CodeBoarding-schema analysis commands (organigrama autocontenido)
+// ─────────────────────────────────────────────────────────────
+
+/// M10: Read `.codeboarding/analysis.json` (CodeBoarding interop) or `graphify-out/analysis.json`
+/// (app-generated). Returns raw JSON or null if neither exists.
+#[tauri::command]
+fn get_analysis(path: String) -> Option<String> {
+    analysis::get_analysis(&path)
+}
+
+/// M10: Generate (or regenerate) a CodeBoarding-schema analysis.json from the indexed graph.
+/// Static fallback always works — LLM enrichment (BYOK) is best-effort.
+/// Persists to `<path>/graphify-out/analysis.json`.
+#[tauri::command]
+async fn generate_analysis(path: String, graph_json: String) -> Result<String, String> {
+    analysis::generate_analysis(&path, &graph_json).await
+}
+
+/// M10: Read a project file for the inline code viewer. Confined to project root (traversal-safe).
+#[tauri::command]
+fn read_project_file(path: String, rel_path: String) -> Result<String, String> {
+    analysis::read_project_file(&path, &rel_path)
+}
+
+// ─────────────────────────────────────────────────────────────
 // M8: Architecture commands (contract v1)
 // ─────────────────────────────────────────────────────────────
 
@@ -541,7 +567,10 @@ pub fn run() {
             get_ai_highlights,
             get_architecture,
             build_static_architecture,
-            enrich_architecture
+            enrich_architecture,
+            get_analysis,
+            generate_analysis,
+            read_project_file
         ])
         .setup(|_app| {
             Ok(())

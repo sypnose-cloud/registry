@@ -1,393 +1,223 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, {
+  useCallback, useEffect, useLayoutEffect,
+  useRef, useState,
+} from 'react';
 import { useAppStore } from '../stores/appStore';
 
 /**
- * M8 — "¿Cómo estoy hecho?" Architecture View.
+ * M10 — Organigrama (vista inmersiva).
  *
- * Reads architecture.json from graphify-out/<project> via get_architecture(path).
- * If null, calls build_static_architecture(path, graphJson) to generate it (no LLM).
- * "Generar descripciones con IA" calls enrich_architecture(path, graphJson) — requires
- * API key or proxy configured in chat settings; on NO_API_KEY surfaces a clear message.
+ * Porta FIEL arch.html del 67 al interior de la app React Tauri.
+ * Esquema de datos: CodeBoarding (get_analysis / generate_analysis).
+ * Principio: lo que no está dentro del contenedor MSIX no existe.
  *
- * File chips → setSelectedNode + setFocusNode (same pattern as ChatPanel citations).
- * Historical mode: shows a banner — v1 always shows current architecture.json (v-next).
- *
- * Theme: all light — #ffffff / #f8fafc / #e5e7eb / #111827 / #6b7280 / #2563eb.
- * ZERO dark backgrounds. Community colors only for left-border accents.
+ * Diseño tokens: los mismos :root de arch.html.
+ * Flechas SVG: drawWires / highlightWires como en arch.html.
+ * Ficha de componente: descripción + archivos + flujos "→" y "←".
+ * Visor de código: números de línea, rango resaltado, scroll al centro.
+ * Lista "El flujo, paso a paso".
+ * Vínculo con el grafo: "Ver en el grafo →" mapea reference_file → node.path.
  */
 
-// ── architecture.json contract ──────────────────────────────────────────────
+// ── Design tokens (from arch.html :root) ───────────────────────────────────
+const T = {
+  bg: '#0b0e14',
+  panel: '#121722',
+  card: '#171e2b',
+  cardHover: '#1d2636',
+  border: '#263042',
+  borderSoft: '#1c2433',
+  text: '#d7dde8',
+  muted: '#8b95a7',
+  dim: '#5c6678',
+  accent: '#4da3ff',
+  accentSoft: '#163050',
+  ok: '#3fb68b',
+} as const;
 
-interface ArchFile {
-  path: string;
-  node_id: string;
+// ── CodeBoarding contract types ─────────────────────────────────────────────
+interface KeyEntity {
+  reference_file: string;
+  reference_start_line?: number;
+  reference_end_line?: number;
 }
 
-interface ArchLink {
-  to: string;
-  label: string;
-}
-
-interface ArchComponent {
-  id: string;
+interface AnalysisComponent {
+  component_id: string | number;
   name: string;
-  kind: 'hub' | 'entry' | 'manifest' | 'module';
-  summary: string;
-  description?: string | null;
-  badges?: string[];
-  files?: ArchFile[];
-  links?: ArchLink[];
+  description: string;
+  key_entities?: KeyEntity[];
 }
 
-interface ArchGroup {
-  id: string;
-  title: string;
-  color: string;
-  summary: string;
-  components: ArchComponent[];
+interface AnalysisRelation {
+  src_id: string | number;
+  dst_id: string | number;
+  src_name?: string;
+  dst_name?: string;
+  relation: string;
 }
 
-interface ArchConnection {
-  from: string;
-  to: string;
-  label: string;
+interface Analysis {
+  components: AnalysisComponent[];
+  components_relations: AnalysisRelation[];
 }
 
-interface Architecture {
-  version: number;
-  generated_at: string;
-  source: 'static' | 'enriched';
-  project_name: string;
-  groups: ArchGroup[];
-  connections?: ArchConnection[];
+// ── Level labels (same as arch.html) ────────────────────────────────────────
+const LABELS = ['Entrada', 'Núcleo', 'Superficies', 'Nivel 4', 'Nivel 5', 'Nivel 6', 'Otros'];
+
+function cid(c: AnalysisComponent): string {
+  return String(c.component_id);
 }
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+/** Kahn topological sort → level per component id (same algo as arch.html) */
+function assignLevels(comps: AnalysisComponent[], rels: AnalysisRelation[]): Map<string, number> {
+  const ids = comps.map(c => cid(c));
+  const incoming = new Map<string, number>(ids.map(i => [i, 0]));
+  const out = new Map<string, string[]>(ids.map(i => [i, []]));
 
-function kindIcon(kind: ArchComponent['kind']): string {
-  switch (kind) {
-    case 'hub': return '⬡';
-    case 'entry': return '▶';
-    case 'manifest': return '📄';
-    case 'module': return '◻';
-    default: return '◻';
+  rels.forEach(r => {
+    const s = String(r.src_id), d = String(r.dst_id);
+    if (incoming.has(d)) incoming.set(d, (incoming.get(d) ?? 0) + 1);
+    if (out.has(s)) out.get(s)!.push(d);
+  });
+
+  const level = new Map<string, number>();
+  let frontier = ids.filter(i => (incoming.get(i) ?? 0) === 0);
+  if (!frontier.length) frontier = ids.length ? [ids[0]] : [];
+  let depth = 0;
+  const seen = new Set<string>();
+
+  while (frontier.length && depth < 6) {
+    frontier.forEach(i => { if (!seen.has(i)) { level.set(i, depth); seen.add(i); } });
+    const next = new Set<string>();
+    frontier.forEach(i => (out.get(i) ?? []).forEach(d => { if (!seen.has(d)) next.add(d); }));
+    frontier = [...next];
+    depth++;
   }
+  ids.forEach(i => { if (!level.has(i)) level.set(i, depth); });
+  return level;
 }
 
-// ── styles (light only) ──────────────────────────────────────────────────────
-
-const S: Record<string, React.CSSProperties> = {
+// ── Tiny styles (inline, matching arch.html look) ───────────────────────────
+const css = {
   overlay: {
-    position: 'fixed',
-    inset: 0,
-    zIndex: 400,
-    background: 'rgba(255,255,255,0.6)',
-    backdropFilter: 'blur(4px)',
-    display: 'flex',
-    flexDirection: 'column',
-    animation: 'fadeIn 0.18s ease',
-    overflow: 'hidden',
-  },
-  panel: {
-    position: 'absolute',
-    top: 48,           // below toolbar
-    right: 0,
-    bottom: 28,        // above statusbar
-    left: 0,
-    background: '#ffffff',
-    display: 'flex',
-    flexDirection: 'column',
+    position: 'fixed' as const, inset: 0, zIndex: 400,
+    background: T.bg, display: 'flex', flexDirection: 'column' as const,
     overflow: 'hidden',
   },
   header: {
-    height: 52,
-    borderBottom: '1px solid #e5e7eb',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '0 20px',
-    gap: 12,
+    display: 'flex', alignItems: 'center', gap: 14, padding: '14px 22px',
+    borderBottom: `1px solid ${T.borderSoft}`, background: T.panel,
     flexShrink: 0,
-    background: '#ffffff',
   },
-  headerTitle: {
-    fontSize: 15,
-    fontWeight: 700,
-    color: '#111827',
-    flex: 1,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  projectBadge: {
-    fontSize: 11,
-    fontWeight: 600,
-    color: '#2563eb',
-    background: 'rgba(37,99,235,0.1)',
-    padding: '2px 8px',
-    borderRadius: 100,
-  },
-  headerActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
-  },
+  h1: { fontSize: 16, fontWeight: 600, color: T.text, margin: 0 },
+  headerActions: { marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' },
   btn: {
-    height: 30,
-    padding: '0 12px',
-    borderRadius: 6,
-    border: '1px solid #e5e7eb',
-    background: '#f8fafc',
-    color: '#374151',
-    fontSize: 12,
-    fontWeight: 500,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
+    background: 'none', border: `1px solid ${T.border}`, color: T.muted,
+    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
   },
   btnAccent: {
-    background: '#2563eb',
-    color: '#ffffff',
-    border: 'none',
+    background: T.accentSoft, border: `1px solid ${T.accent}`, color: T.accent,
+    borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
   },
-  btnDisabled: {
-    opacity: 0.45,
-    cursor: 'default',
-  },
-  closeBtn: {
-    width: 30,
-    height: 30,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 6,
-    border: 'none',
-    background: 'transparent',
-    color: '#6b7280',
-    cursor: 'pointer',
-    fontSize: 16,
-  },
-  body: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '20px 24px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 32,
-  },
-  // Loading / empty
-  stateBox: {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-    gap: 12,
-    color: '#6b7280',
-    fontSize: 14,
-  },
-  stateIcon: {
-    fontSize: 32,
-    opacity: 0.4,
-  },
+  wrap: { flex: 1, overflowY: 'auto' as const, padding: '26px 22px 60px', maxWidth: 1020, margin: '0 auto', width: '100%' },
+  meta: { color: T.muted, fontSize: 13, marginBottom: 8 },
+  hint: { color: T.dim, fontSize: 12, marginBottom: 20 },
+  state: { textAlign: 'center' as const, color: T.muted, padding: '80px 20px', fontSize: 14 },
   errorBox: {
-    background: 'rgba(220,38,38,0.06)',
-    border: '1px solid rgba(220,38,38,0.2)',
-    borderRadius: 8,
-    padding: '10px 14px',
-    fontSize: 13,
-    color: '#dc2626',
-    margin: '8px 0',
+    background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)',
+    borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#f87171', margin: '8px 0',
   },
-  // Historical banner
-  historicalBanner: {
-    background: 'rgba(217,119,6,0.08)',
-    border: '1px solid rgba(217,119,6,0.3)',
-    borderRadius: 8,
-    padding: '8px 14px',
-    fontSize: 12,
-    color: '#92400e',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 6,
+  flowbox: { position: 'relative' as const },
+  wiresWrap: { position: 'absolute' as const, inset: 0, pointerEvents: 'none' as const, zIndex: 1, overflow: 'visible' as const },
+  flow: { display: 'flex', flexDirection: 'column' as const, position: 'relative' as const, zIndex: 2 },
+  level: {
+    border: `1px solid ${T.borderSoft}`, borderRadius: 16, padding: 18,
+    background: 'rgba(18,23,34,0.72)', position: 'relative' as const,
+    marginTop: 8,
   },
-  // Section label
-  sectionLabel: {
-    fontSize: 11,
-    fontWeight: 700,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase' as const,
-    color: '#9ca3af',
-    marginBottom: 12,
+  levelGap: { marginTop: 46 },
+  levelLabel: {
+    position: 'absolute' as const, top: -9, left: 16,
+    background: T.bg, color: T.dim, fontSize: 11, letterSpacing: '0.08em',
+    padding: '0 8px', textTransform: 'uppercase' as const,
   },
-  // Group box
-  groupBox: {
-    borderRadius: 10,
-    border: '1px solid #e5e7eb',
-    borderLeft: '4px solid #2563eb', // overridden inline with community color
-    background: '#f8fafc',
-    padding: '14px 16px',
-    marginBottom: 12,
+  cards: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12 },
+  node: {
+    background: T.card, border: `1px solid ${T.border}`, borderRadius: 12,
+    padding: '13px 15px', cursor: 'pointer', transition: 'background 0.12s, border-color 0.12s',
   },
-  groupHeader: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginBottom: 8,
+  nodeH3: { fontSize: 14.5, fontWeight: 600, color: T.text, marginBottom: 4 },
+  nodeP: { fontSize: 12.5, color: T.muted },
+  nodeFiles: { marginTop: 9, display: 'flex', flexWrap: 'wrap' as const, gap: 5 },
+  nodeMore: { fontSize: 11, color: T.accent, marginTop: 7 },
+  chip: {
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace", fontSize: 11, lineHeight: 1,
+    color: T.accent, background: T.accentSoft, borderRadius: 6, padding: '4px 7px',
+    border: 'none', cursor: 'pointer',
   },
-  groupColorDot: {
-    width: 10,
-    height: 10,
-    borderRadius: '50%',
-    flexShrink: 0,
-    marginTop: 4,
+  rels: { marginTop: 34 },
+  relsH2: { fontSize: 14, color: T.muted, fontWeight: 600, marginBottom: 12, letterSpacing: '0.05em', textTransform: 'uppercase' as const },
+  rel: { display: 'flex', gap: 10, alignItems: 'baseline', padding: '9px 0', borderBottom: `1px solid ${T.borderSoft}`, fontSize: 13 },
+  relPair: { whiteSpace: 'nowrap' as const, color: T.text },
+  relArrow: { color: T.accent },
+  relWhat: { color: T.muted },
+  // Overlay (viewer + detail)
+  modalOverlay: {
+    position: 'fixed' as const, inset: 0, background: 'rgba(4,7,12,0.78)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 30,
   },
-  groupTitle: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: '#111827',
+  viewer: {
+    width: 'min(960px, 100%)', height: 'min(80vh, 720px)', background: T.panel,
+    border: `1px solid ${T.border}`, borderRadius: 14, display: 'flex', flexDirection: 'column' as const,
+    overflow: 'hidden',
   },
-  groupSummary: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginTop: 2,
-    lineHeight: 1.5,
+  viewerBar: {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px',
+    borderBottom: `1px solid ${T.borderSoft}`,
+    fontFamily: "ui-monospace, monospace", fontSize: 12.5, color: T.accent,
   },
-  // Mini-components inside group
-  compRow: {
-    display: 'flex',
-    flexWrap: 'wrap' as const,
-    gap: 6,
-    marginTop: 10,
+  viewerClose: {
+    marginLeft: 'auto', background: 'none', border: `1px solid ${T.border}`, color: T.muted,
+    borderRadius: 7, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
   },
-  compChip: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
-    padding: '4px 10px',
-    borderRadius: 6,
-    border: '1px solid #e5e7eb',
-    background: '#ffffff',
-    fontSize: 12,
-    color: '#374151',
-    cursor: 'default',
+  viewerPre: {
+    flex: 1, overflow: 'auto', padding: '14px 0',
+    fontFamily: "ui-monospace, 'Cascadia Code', monospace", fontSize: 12, lineHeight: 1.6,
+    color: T.text, margin: 0,
   },
-  compKindIcon: {
-    fontSize: 11,
-    color: '#9ca3af',
+  detail: {
+    width: 'min(680px, 100%)', maxHeight: 'min(82vh, 760px)', background: T.panel,
+    border: `1px solid ${T.border}`, borderRadius: 14, display: 'flex', flexDirection: 'column' as const,
+    overflow: 'hidden',
   },
-  badge: {
-    fontSize: 10,
-    padding: '1px 6px',
-    borderRadius: 10,
-    background: 'rgba(37,99,235,0.08)',
-    color: '#2563eb',
-    fontWeight: 500,
+  detailBar: {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '12px 18px',
+    borderBottom: `1px solid ${T.borderSoft}`,
   },
-  // Connections between groups
-  connectionsList: {
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 4,
+  detailH2: { fontSize: 15.5, fontWeight: 600, color: T.text },
+  detailClose: {
+    marginLeft: 'auto', background: 'none', border: `1px solid ${T.border}`, color: T.muted,
+    borderRadius: 7, padding: '4px 10px', cursor: 'pointer', fontSize: 12,
   },
-  connectionRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    fontSize: 12,
-    color: '#6b7280',
+  detailBody: { overflow: 'auto', padding: '16px 18px 22px' },
+  detailDesc: { fontSize: 13.5, color: T.text, marginBottom: 16 },
+  detailH4: { fontSize: 12, color: T.dim, textTransform: 'uppercase' as const, letterSpacing: '0.06em', margin: '16px 0 8px' },
+  detailFiles: { display: 'flex', flexWrap: 'wrap' as const, gap: 6 },
+  flowline: {
+    display: 'flex', gap: 8, alignItems: 'baseline', padding: '7px 0',
+    fontSize: 13, borderBottom: `1px solid ${T.borderSoft}`,
   },
-  connectionLabel: {
-    fontSize: 11,
-    color: '#9ca3af',
-    fontStyle: 'italic',
-    minWidth: 60,
-    textAlign: 'center' as const,
-  },
-  connectionArrow: {
-    color: '#d1d5db',
-    fontSize: 14,
-  },
-  connectionFrom: {
-    fontWeight: 600,
-    color: '#374151',
-  },
-  connectionTo: {
-    fontWeight: 600,
-    color: '#374151',
-  },
-  // Component cards grid
-  cardGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
-    gap: 12,
-  },
-  card: {
-    borderRadius: 10,
-    border: '1px solid #e5e7eb',
-    background: '#f8fafc',
-    padding: '14px 16px',
-    display: 'flex',
-    flexDirection: 'column' as const,
-    gap: 8,
-  },
-  cardHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-  },
-  cardName: {
-    fontSize: 13,
-    fontWeight: 700,
-    color: '#111827',
-    flex: 1,
-  },
-  cardKind: {
-    fontSize: 10,
-    fontWeight: 600,
-    color: '#6b7280',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.05em',
-  },
-  cardSummary: {
-    fontSize: 12,
-    color: '#4b5563',
-    lineHeight: 1.55,
-  },
-  cardDescription: {
-    fontSize: 12,
-    color: '#6b7280',
-    lineHeight: 1.55,
-    fontStyle: 'italic',
-  },
-  badgeRow: {
-    display: 'flex',
-    flexWrap: 'wrap' as const,
-    gap: 4,
-  },
-  fileChip: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 3,
-    padding: '2px 7px',
-    borderRadius: 4,
-    background: 'rgba(37,99,235,0.07)',
-    color: '#2563eb',
-    border: 'none',
-    fontSize: 11,
-    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-    cursor: 'pointer',
-    transition: 'background 0.15s',
-  },
-  sourceTag: {
-    fontSize: 10,
-    padding: '2px 7px',
-    borderRadius: 10,
-    fontWeight: 600,
+  flowlineDir: { color: T.accent, fontWeight: 600, whiteSpace: 'nowrap' as const },
+  flowlineWho: { color: T.text, whiteSpace: 'nowrap' as const },
+  flowlineWhat: { color: T.muted },
+  viewInGraph: {
+    marginTop: 12, background: 'none', border: `1px solid ${T.border}`, color: T.accent,
+    borderRadius: 7, padding: '6px 12px', cursor: 'pointer', fontSize: 12,
   },
 };
 
-// ── main component ────────────────────────────────────────────────────────────
+// ── Main component ───────────────────────────────────────────────────────────
 
 export const ArchitectureView: React.FC = () => {
   const {
@@ -395,383 +225,713 @@ export const ArchitectureView: React.FC = () => {
     toggleArchitecture,
     graph,
     projectPath,
-    viewMode,
     setSelectedNode,
     setFocusNode,
   } = useAppStore();
 
-  const [arch, setArch] = useState<Architecture | null>(null);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [loading, setLoading] = useState(false);
   const [enriching, setEnriching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [enrichError, setEnrichError] = useState<string | null>(null);
-  const isMountedRef = useRef(true);
+  const [hasApiKey, setHasApiKey] = useState(false);
+
+  // Viewer overlay state (code viewer)
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerPath, setViewerPath] = useState('');
+  const [viewerCode, setViewerCode] = useState<string | null>(null);
+  const [viewerStart, setViewerStart] = useState(1);
+  const [viewerEnd, setViewerEnd] = useState(1);
+  const [viewerLoading, setViewerLoading] = useState(false);
+
+  // Detail overlay state (component ficha)
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailCid, setDetailCid] = useState<string | null>(null);
+
+  const svgRef = useRef<SVGSVGElement>(null);
+  const flowboxRef = useRef<HTMLDivElement>(null);
+  const isMounted = useRef(true);
+
+  // Keep line refs for scroll-to-highlight
+  const lineRefs = useRef<Map<number, HTMLSpanElement>>(new Map());
 
   useEffect(() => {
-    isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
+    isMounted.current = true;
+    return () => { isMounted.current = false; };
   }, []);
 
-  // ── load or generate architecture when opened ──────────────────────────────
-  const loadArchitecture = useCallback(async () => {
-    if (!isArchitectureOpen || !graph || !projectPath) return;
+  // ── Invoke helper (lazy import Tauri) ────────────────────────────────────
+  const invoke = useCallback(async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+    const mod = await import('@tauri-apps/api/core');
+    return (mod.invoke as (cmd: string, args?: Record<string, unknown>) => Promise<T>)(cmd, args);
+  }, []);
+
+  // ── Check API key status ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isArchitectureOpen) return;
+    invoke<{ configured: boolean; hint: string }>('get_api_key_status')
+      .then(s => { if (isMounted.current) setHasApiKey(s.configured); })
+      .catch(() => {});
+  }, [isArchitectureOpen, invoke]);
+
+  // ── Load or generate analysis on open ───────────────────────────────────
+  const loadAnalysis = useCallback(async () => {
+    if (!isArchitectureOpen || !projectPath) return;
     setLoading(true);
     setError(null);
 
     try {
-      let invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      try {
-        const mod = await import('@tauri-apps/api/core');
-        invoke = mod.invoke as typeof invoke;
-      } catch {
-        // Browser mode — show placeholder
-        if (isMountedRef.current) {
-          setArch(null);
-          setError('Running in browser mode — Tauri commands unavailable. Open in the desktop app.');
-          setLoading(false);
-        }
-        return;
-      }
-
-      // Try to read existing architecture.json
+      // 1. Try reading existing analysis.json
       let raw: string | null = null;
       try {
-        raw = await invoke<string | null>('get_architecture', { path: projectPath });
-      } catch {
-        raw = null;
-      }
+        raw = await invoke<string | null>('get_analysis', { path: projectPath });
+      } catch { raw = null; }
 
+      // 2. Generate static if not found
       if (!raw) {
-        // Generate static architecture (no LLM)
+        if (!graph) {
+          if (isMounted.current) {
+            setError('El grafo no está cargado. Abre un proyecto primero.');
+            setLoading(false);
+          }
+          return;
+        }
         try {
           const graphJson = JSON.stringify(graph);
-          raw = await invoke<string>('build_static_architecture', { path: projectPath, graphJson });
-        } catch (buildErr) {
-          if (isMountedRef.current) {
-            setError(`Could not generate architecture: ${buildErr}`);
+          raw = await invoke<string>('generate_analysis', { path: projectPath, graphJson });
+        } catch (err) {
+          if (isMounted.current) {
+            setError(`No se pudo generar el organigrama: ${err}`);
             setLoading(false);
           }
           return;
         }
       }
 
-      if (isMountedRef.current) {
+      if (isMounted.current) {
         try {
-          setArch(JSON.parse(raw) as Architecture);
+          setAnalysis(JSON.parse(raw) as Analysis);
         } catch {
-          setError('Architecture file is malformed.');
+          setError('El archivo analysis.json está malformado.');
         }
         setLoading(false);
       }
     } catch (err) {
-      if (isMountedRef.current) {
-        setError(`Unexpected error: ${err}`);
+      if (isMounted.current) {
+        setError(`Error inesperado: ${err}`);
         setLoading(false);
       }
     }
-  }, [isArchitectureOpen, graph, projectPath]);
+  }, [isArchitectureOpen, graph, projectPath, invoke]);
 
   useEffect(() => {
     if (isArchitectureOpen) {
-      void loadArchitecture();
+      void loadAnalysis();
     } else {
-      // Reset when closed so next open starts fresh
-      setArch(null);
+      setAnalysis(null);
       setError(null);
       setEnrichError(null);
+      setViewerOpen(false);
+      setDetailOpen(false);
     }
-  }, [isArchitectureOpen, loadArchitecture]);
+  }, [isArchitectureOpen, loadAnalysis]);
 
-  // ── keyboard handler (Esc closes) ─────────────────────────────────────────
+  // ── ESC handler ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isArchitectureOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') toggleArchitecture();
+      if (e.key === 'Escape') {
+        if (viewerOpen) { setViewerOpen(false); return; }
+        if (detailOpen) { setDetailOpen(false); return; }
+        toggleArchitecture();
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isArchitectureOpen, toggleArchitecture]);
+  }, [isArchitectureOpen, viewerOpen, detailOpen, toggleArchitecture]);
 
-  if (!isArchitectureOpen) return null;
+  // ── Draw SVG wires (same algorithm as arch.html drawWires) ───────────────
+  const drawWires = useCallback(() => {
+    const svg = svgRef.current;
+    const box = flowboxRef.current;
+    if (!svg || !box || !analysis) return;
 
-  // ── handlers ──────────────────────────────────────────────────────────────
+    const boxRect = box.getBoundingClientRect();
+    svg.setAttribute('width', String(boxRect.width));
+    svg.setAttribute('height', String(boxRect.height));
 
-  const handleRefresh = async () => {
-    if (!graph || !projectPath) return;
-    setLoading(true);
-    setError(null);
-    setEnrichError(null);
-    setArch(null);
-    try {
-      let invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      try {
-        const mod = await import('@tauri-apps/api/core');
-        invoke = mod.invoke as typeof invoke;
-      } catch {
-        setError('Running in browser mode — Tauri unavailable.');
-        setLoading(false);
-        return;
+    // Remove existing wires (not the <defs>)
+    [...svg.querySelectorAll('path.wire')].forEach(p => p.remove());
+
+    const boxLeft = boxRect.left;
+    const boxTop = boxRect.top;
+
+    analysis.components_relations.forEach(r => {
+      const srcId = String(r.src_id);
+      const dstId = String(r.dst_id);
+      const a = box.querySelector<HTMLElement>(`.arch-node[data-cid="${CSS.escape(srcId)}"]`);
+      const b = box.querySelector<HTMLElement>(`.arch-node[data-cid="${CSS.escape(dstId)}"]`);
+      if (!a || !b) return;
+
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      const sameRow = Math.abs(ra.top - rb.top) < 30;
+      let x1: number, y1: number, x2: number, y2: number;
+
+      if (sameRow) {
+        const leftFirst = ra.left < rb.left;
+        x1 = (leftFirst ? ra.right : ra.left) - boxLeft;
+        y1 = ra.top + ra.height / 2 - boxTop;
+        x2 = (leftFirst ? rb.left : rb.right) - boxLeft;
+        y2 = rb.top + rb.height / 2 - boxTop;
+      } else {
+        const down = rb.top > ra.top;
+        x1 = ra.left + ra.width / 2 - boxLeft;
+        y1 = (down ? ra.bottom : ra.top) - boxTop;
+        x2 = rb.left + rb.width / 2 - boxLeft;
+        y2 = (down ? rb.top : rb.bottom) - boxTop;
       }
-      const graphJson = JSON.stringify(graph);
-      const raw = await invoke<string>('build_static_architecture', { path: projectPath, graphJson });
-      if (isMountedRef.current) {
-        setArch(JSON.parse(raw) as Architecture);
-        setLoading(false);
+
+      const midY = (y1 + y2) / 2;
+      const d = sameRow
+        ? `M${x1},${y1} C${(x1 + x2) / 2},${y1 - 26} ${(x1 + x2) / 2},${y2 - 26} ${x2},${y2}`
+        : `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`;
+
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('class', 'wire');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', T.border);
+      path.setAttribute('stroke-width', '1.5');
+      path.setAttribute('marker-end', 'url(#arch-arr)');
+      path.style.transition = 'stroke 0.15s, stroke-width 0.15s';
+      path.dataset.src = srcId;
+      path.dataset.dst = dstId;
+
+      const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+      title.textContent = r.relation;
+      path.appendChild(title);
+      svg.appendChild(path);
+    });
+  }, [analysis]);
+
+  useLayoutEffect(() => {
+    if (!analysis || !isArchitectureOpen) return;
+    // Give React time to paint cards before drawing wires
+    const id = requestAnimationFrame(drawWires);
+    return () => cancelAnimationFrame(id);
+  }, [analysis, isArchitectureOpen, drawWires]);
+
+  useEffect(() => {
+    if (!analysis || !isArchitectureOpen) return;
+    const handler = () => requestAnimationFrame(drawWires);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, [analysis, isArchitectureOpen, drawWires]);
+
+  // ── Highlight wires on hover (same as arch.html highlightWires) ──────────
+  const highlightWires = useCallback((cidStr: string, on: boolean) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    svg.querySelectorAll<SVGPathElement>('path.wire').forEach(p => {
+      if (p.dataset.src === cidStr || p.dataset.dst === cidStr) {
+        p.setAttribute('stroke', on ? T.accent : T.border);
+        p.setAttribute('stroke-width', on ? '2.5' : '1.5');
+      }
+    });
+  }, []);
+
+  // ── Open file viewer ─────────────────────────────────────────────────────
+  const openFile = useCallback(async (relPath: string, start: number, end: number) => {
+    setViewerPath(relPath);
+    setViewerStart(start || 1);
+    setViewerEnd(end || 1);
+    setViewerCode(null);
+    setViewerLoading(true);
+    setViewerOpen(true);
+    lineRefs.current.clear();
+
+    if (!projectPath) {
+      setViewerCode(null);
+      setViewerLoading(false);
+      return;
+    }
+
+    try {
+      const text = await invoke<string>('read_project_file', { path: projectPath, relPath });
+      if (isMounted.current) {
+        setViewerCode(text);
+        setViewerLoading(false);
       }
     } catch (err) {
-      if (isMountedRef.current) {
-        setError(`Rebuild failed: ${err}`);
-        setLoading(false);
+      if (isMounted.current) {
+        setViewerCode(null);
+        setViewerLoading(false);
+        setError(`No se pudo cargar el archivo: ${err}`);
       }
     }
-  };
+  }, [projectPath, invoke]);
 
-  const handleEnrich = async () => {
-    if (!graph || !projectPath || enriching) return;
+  // Scroll highlighted line into center after render
+  useEffect(() => {
+    if (!viewerOpen || viewerLoading || !viewerCode) return;
+    const ref = lineRefs.current.get(viewerStart);
+    if (ref) {
+      setTimeout(() => ref.scrollIntoView({ block: 'center' }), 50);
+    }
+  }, [viewerOpen, viewerLoading, viewerCode, viewerStart]);
+
+  // ── Open component detail ────────────────────────────────────────────────
+  const openDetail = useCallback((cidStr: string) => {
+    setDetailCid(cidStr);
+    setDetailOpen(true);
+  }, []);
+
+  // ── "Ver en el grafo →" handler ──────────────────────────────────────────
+  const viewInGraph = useCallback((comp: AnalysisComponent) => {
+    if (!graph || !comp.key_entities?.length) return;
+    // Find first key_entity whose reference_file matches a node.path in the graph
+    for (const entity of (comp.key_entities ?? [])) {
+      const refFile = entity.reference_file;
+      const matchedNode = graph.nodes.find(n => {
+        const nodePath = (n as unknown as { path?: string }).path ?? '';
+        return nodePath === refFile || nodePath.endsWith(refFile) || refFile.endsWith(nodePath);
+      });
+      if (matchedNode) {
+        setSelectedNode(matchedNode.id);
+        setFocusNode(matchedNode.id);
+        toggleArchitecture();
+        return;
+      }
+    }
+    // No match found — close view anyway to expose the graph
+    toggleArchitecture();
+  }, [graph, setSelectedNode, setFocusNode, toggleArchitecture]);
+
+  // ── Enrich with AI ───────────────────────────────────────────────────────
+  const handleEnrich = useCallback(async () => {
+    if (!projectPath || !graph || enriching) return;
     setEnriching(true);
     setEnrichError(null);
     try {
-      let invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
-      try {
-        const mod = await import('@tauri-apps/api/core');
-        invoke = mod.invoke as typeof invoke;
-      } catch {
-        setEnrichError('Running in browser mode — Tauri unavailable.');
-        setEnriching(false);
-        return;
-      }
       const graphJson = JSON.stringify(graph);
-      const raw = await invoke<string>('enrich_architecture', { path: projectPath, graphJson });
-      if (isMountedRef.current) {
-        setArch(JSON.parse(raw) as Architecture);
+      const raw = await invoke<string>('generate_analysis', { path: projectPath, graphJson });
+      if (isMounted.current) {
+        setAnalysis(JSON.parse(raw) as Analysis);
         setEnriching(false);
       }
     } catch (err) {
       const msg = String(err);
-      if (isMountedRef.current) {
-        if (msg.includes('NO_API_KEY')) {
-          setEnrichError('No API key configured. Open the chat panel (💬) and configure your API key or proxy in Settings (⚙).');
-        } else {
-          setEnrichError(`Enrichment failed: ${msg}`);
-        }
+      if (isMounted.current) {
+        setEnrichError(msg.includes('NO_API_KEY')
+          ? 'Sin clave API. Configura tu clave en el panel de chat (⚙).'
+          : `Error al redactar: ${msg}`);
         setEnriching(false);
       }
     }
-  };
+  }, [projectPath, graph, enriching, invoke]);
 
-  const handleFileChipClick = (nodeId: string) => {
-    setSelectedNode(nodeId);
-    setFocusNode(nodeId);
-    toggleArchitecture();
-  };
+  // ── Refresh ──────────────────────────────────────────────────────────────
+  const handleRefresh = useCallback(async () => {
+    if (!projectPath || !graph) return;
+    setLoading(true);
+    setError(null);
+    setEnrichError(null);
+    setAnalysis(null);
+    try {
+      const graphJson = JSON.stringify(graph);
+      const raw = await invoke<string>('generate_analysis', { path: projectPath, graphJson });
+      if (isMounted.current) {
+        setAnalysis(JSON.parse(raw) as Analysis);
+        setLoading(false);
+      }
+    } catch (err) {
+      if (isMounted.current) {
+        setError(`Error al actualizar: ${err}`);
+        setLoading(false);
+      }
+    }
+  }, [projectPath, graph, invoke]);
 
-  // ── render ────────────────────────────────────────────────────────────────
+  if (!isArchitectureOpen) return null;
 
-  const projectName = arch?.project_name ?? graph?.projectName ?? projectPath?.split(/[\\/]/).filter(Boolean).pop() ?? 'Project';
+  // ── Build level map ──────────────────────────────────────────────────────
+  const comps = analysis?.components ?? [];
+  const rels = analysis?.components_relations ?? [];
+  const BYID = new Map<string, AnalysisComponent>(comps.map(c => [cid(c), c]));
+  const levelMap = analysis ? assignLevels(comps, rels) : new Map<string, number>();
+  const maxLevel = levelMap.size ? Math.max(...levelMap.values()) : 0;
 
+  const projectName = projectPath?.split(/[\\/]/).filter(Boolean).pop() ?? 'Project';
+
+  const detailComp = detailCid ? BYID.get(detailCid) : null;
+  const detailOuts = detailCid ? rels.filter(r => String(r.src_id) === detailCid) : [];
+  const detailIns  = detailCid ? rels.filter(r => String(r.dst_id) === detailCid) : [];
+
+  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={S.overlay}>
-      <div style={S.panel}>
+    <>
+      {/* Main overlay */}
+      <div style={css.overlay}>
         {/* Header */}
-        <div style={S.header}>
-          <div style={S.headerTitle}>
-            <span style={{ fontSize: 18 }}>⬡</span>
-            <span>¿Cómo estoy hecho?</span>
-            <span style={S.projectBadge}>{projectName}</span>
-            {arch && (
-              <span style={{
-                ...S.sourceTag,
-                background: arch.source === 'enriched' ? 'rgba(22,163,74,0.1)' : 'rgba(107,114,128,0.1)',
-                color: arch.source === 'enriched' ? '#16a34a' : '#6b7280',
-              }}>
-                {arch.source === 'enriched' ? 'IA enriched' : 'static'}
-              </span>
+        <div style={css.header}>
+          <h1 style={css.h1}>Organigrama — {projectName}</h1>
+          <div style={css.headerActions}>
+            {hasApiKey && (
+              <button
+                style={css.btnAccent}
+                onClick={handleEnrich}
+                disabled={enriching || loading || !graph}
+                title="Re-generar con LLM (requiere clave API)"
+              >
+                {enriching ? '⏳ Redactando…' : '✦ Redactar con IA'}
+              </button>
             )}
-          </div>
-          <div style={S.headerActions}>
             <button
-              style={{ ...S.btn, ...(loading || !graph ? S.btnDisabled : {}) }}
+              style={css.btn}
               onClick={handleRefresh}
               disabled={loading || !graph}
-              title="Rebuild static architecture (no LLM)"
+              title="Regenerar organigrama (estático, sin LLM)"
             >
               ↺ Actualizar
             </button>
             <button
-              style={{ ...S.btn, ...S.btnAccent, ...(enriching || !graph ? S.btnDisabled : {}) }}
-              onClick={handleEnrich}
-              disabled={enriching || !graph}
-              title="Enrich with AI summaries — requires API key or proxy"
-            >
-              {enriching ? '⏳ Generando…' : '✦ Generar descripciones con IA'}
-            </button>
-            <button
-              style={S.closeBtn}
+              style={{ ...css.btn, marginLeft: 6 }}
               onClick={toggleArchitecture}
               title="Cerrar (Esc)"
             >
-              ✕
+              ✕ Cerrar
             </button>
           </div>
         </div>
 
         {/* Body */}
-        <div style={S.body}>
-          {/* Historical mode banner */}
-          {viewMode === 'historical' && (
-            <div style={S.historicalBanner}>
-              <span>⚠</span>
-              <span>Estás viendo el grafo histórico — la arquitectura mostrada refleja el <strong>estado actual</strong> del proyecto (v1 no reconstruye el pasado).</span>
-            </div>
-          )}
-
-          {/* Enrich error */}
-          {enrichError && (
-            <div style={S.errorBox}>{enrichError}</div>
-          )}
-
-          {/* Loading state */}
-          {loading && (
-            <div style={S.stateBox}>
-              <span style={S.stateIcon}>⬡</span>
-              <span>Analizando arquitectura…</span>
-              <span style={{ fontSize: 12, color: '#9ca3af' }}>Construyendo mapa estático sin LLM</span>
-            </div>
-          )}
-
-          {/* General error */}
-          {!loading && error && (
-            <div style={S.stateBox}>
-              <span style={{ ...S.stateIcon, fontSize: 28 }}>⚠</span>
-              <div style={{ ...S.errorBox, alignSelf: 'stretch' }}>{error}</div>
-            </div>
-          )}
-
-          {/* Empty state (no arch and no error) */}
-          {!loading && !error && !arch && (
-            <div style={S.stateBox}>
-              <span style={S.stateIcon}>◻</span>
-              <span>No hay datos de arquitectura todavía.</span>
-            </div>
-          )}
-
-          {/* Architecture content */}
-          {!loading && !error && arch && (
+        <div style={css.wrap}>
+          {/* Meta / hint */}
+          {analysis && (
             <>
-              {/* SECTION: Arquitectura — group boxes */}
-              <div>
-                <div style={S.sectionLabel}>Arquitectura</div>
-                {arch.groups.map(group => (
-                  <div
-                    key={group.id}
-                    style={{ ...S.groupBox, borderLeft: `4px solid ${group.color}` }}
-                  >
-                    <div style={S.groupHeader}>
-                      <div style={{ ...S.groupColorDot, background: group.color }} />
-                      <div style={{ flex: 1 }}>
-                        <div style={S.groupTitle}>{group.title}</div>
-                        {group.summary && (
-                          <div style={S.groupSummary}>{group.summary}</div>
-                        )}
-                      </div>
-                    </div>
-                    {/* Mini component chips inside group */}
-                    {group.components.length > 0 && (
-                      <div style={S.compRow}>
-                        {group.components.map(comp => (
-                          <div key={comp.id} style={S.compChip}>
-                            <span style={S.compKindIcon}>{kindIcon(comp.kind)}</span>
-                            <span>{comp.name}</span>
-                            {comp.badges && comp.badges.slice(0, 1).map((b, i) => (
-                              <span key={i} style={S.badge}>{b}</span>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Connections between groups */}
-                {arch.connections && arch.connections.length > 0 && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ ...S.sectionLabel, fontSize: 10 }}>Conexiones entre grupos</div>
-                    <div style={S.connectionsList}>
-                      {arch.connections.map((conn, i) => (
-                        <div key={i} style={S.connectionRow}>
-                          <span style={S.connectionFrom}>{conn.from}</span>
-                          <span style={S.connectionArrow}>→</span>
-                          <span style={S.connectionLabel}>{conn.label}</span>
-                          <span style={S.connectionArrow}>→</span>
-                          <span style={S.connectionTo}>{conn.to}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+              <div style={css.meta}>
+                <b style={{ color: T.text }}>{comps.length}</b> componentes{' '}
+                · <b style={{ color: T.text }}>{rels.length}</b> flujos{' '}
+                · generado automáticamente por análisis estático + LLM
               </div>
-
-              {/* SECTION: Componentes — cards grid */}
-              <div>
-                <div style={S.sectionLabel}>Componentes</div>
-                <div style={S.cardGrid}>
-                  {arch.groups.flatMap(g => g.components).map(comp => (
-                    <div key={comp.id} style={S.card}>
-                      <div style={S.cardHeader}>
-                        <span style={{ fontSize: 14 }}>{kindIcon(comp.kind)}</span>
-                        <span style={S.cardName}>{comp.name}</span>
-                        <span style={S.cardKind}>{comp.kind}</span>
-                      </div>
-
-                      {comp.summary && (
-                        <div style={S.cardSummary}>{comp.summary}</div>
-                      )}
-
-                      {comp.description && (
-                        <div style={S.cardDescription}>{comp.description}</div>
-                      )}
-
-                      {comp.badges && comp.badges.length > 0 && (
-                        <div style={S.badgeRow}>
-                          {comp.badges.map((b, i) => (
-                            <span key={i} style={S.badge}>{b}</span>
-                          ))}
-                        </div>
-                      )}
-
-                      {comp.files && comp.files.length > 0 && (
-                        <div style={S.badgeRow}>
-                          {comp.files.map((f, i) => (
-                            <button
-                              key={i}
-                              style={S.fileChip}
-                              title={`Focus node: ${f.node_id}`}
-                              onClick={() => handleFileChipClick(f.node_id)}
-                              onMouseEnter={e => {
-                                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(37,99,235,0.15)';
-                              }}
-                              onMouseLeave={e => {
-                                (e.currentTarget as HTMLButtonElement).style.background = 'rgba(37,99,235,0.07)';
-                              }}
-                            >
-                              📄 {f.path.split(/[\\/]/).pop() ?? f.path}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Generated at footer */}
-              <div style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', paddingBottom: 8 }}>
-                Generado: {new Date(arch.generated_at).toLocaleString()}
+              <div style={css.hint}>
+                Clic en una tarjeta = ficha del componente y su flujo · clic en un archivo = código real · pasa el ratón para iluminar las flechas
               </div>
             </>
           )}
+
+          {/* Enrich error */}
+          {enrichError && <div style={css.errorBox}>{enrichError}</div>}
+
+          {/* Loading */}
+          {loading && (
+            <div style={css.state}>
+              <div>Analizando organigrama…</div>
+              <div style={{ fontSize: 12, color: T.dim, marginTop: 8 }}>Construyendo mapa estático</div>
+            </div>
+          )}
+
+          {/* Error */}
+          {!loading && error && (
+            <div style={css.state}>
+              <div style={css.errorBox}>{error}</div>
+            </div>
+          )}
+
+          {/* Empty */}
+          {!loading && !error && !analysis && (
+            <div style={css.state}>No hay datos de organigrama todavía.</div>
+          )}
+
+          {/* Flowbox with SVG wires + level cards */}
+          {!loading && !error && analysis && (
+            <div style={css.flowbox} ref={flowboxRef}>
+              {/* SVG wires layer */}
+              <svg
+                ref={svgRef}
+                style={css.wiresWrap}
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <defs>
+                  <marker
+                    id="arch-arr"
+                    viewBox="0 0 10 10"
+                    refX="8"
+                    refY="5"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                  >
+                    <path
+                      d="M2 1L8 5L2 9"
+                      fill="none"
+                      stroke={T.border}
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                  </marker>
+                </defs>
+              </svg>
+
+              {/* Flow levels */}
+              <div style={css.flow}>
+                {Array.from({ length: maxLevel + 1 }, (_, L) => {
+                  const group = comps.filter(c => levelMap.get(cid(c)) === L);
+                  if (!group.length) return null;
+                  return (
+                    <div
+                      key={L}
+                      style={{ ...css.level, ...(L > 0 ? css.levelGap : {}) }}
+                    >
+                      <span style={css.levelLabel}>
+                        {LABELS[Math.min(L, LABELS.length - 1)]}
+                      </span>
+                      <div style={css.cards}>
+                        {group.map(comp => {
+                          const entities = comp.key_entities ?? [];
+                          const cidStr = cid(comp);
+                          return (
+                            <div
+                              key={cidStr}
+                              className="arch-node"
+                              data-cid={cidStr}
+                              style={css.node}
+                              onMouseEnter={e => {
+                                (e.currentTarget as HTMLDivElement).style.background = T.cardHover;
+                                (e.currentTarget as HTMLDivElement).style.borderColor = T.accent;
+                                highlightWires(cidStr, true);
+                              }}
+                              onMouseLeave={e => {
+                                (e.currentTarget as HTMLDivElement).style.background = T.card;
+                                (e.currentTarget as HTMLDivElement).style.borderColor = T.border;
+                                highlightWires(cidStr, false);
+                              }}
+                              onClick={e => {
+                                const chip = (e.target as HTMLElement).closest('.arch-chip') as HTMLElement | null;
+                                if (chip) {
+                                  e.stopPropagation();
+                                  openFile(
+                                    chip.dataset.f ?? '',
+                                    parseInt(chip.dataset.l ?? '1', 10),
+                                    parseInt(chip.dataset.e ?? '1', 10),
+                                  );
+                                  return;
+                                }
+                                openDetail(cidStr);
+                              }}
+                            >
+                              <div style={css.nodeH3}>{comp.name}</div>
+                              <div style={css.nodeP}>
+                                {(comp.description || '').slice(0, 140)}
+                                {(comp.description || '').length > 140 ? '…' : ''}
+                              </div>
+                              <div style={css.nodeFiles}>
+                                {entities.slice(0, 6).map((e, i) => (
+                                  <span
+                                    key={i}
+                                    className="arch-chip"
+                                    data-f={e.reference_file}
+                                    data-l={String(e.reference_start_line ?? 1)}
+                                    data-e={String(e.reference_end_line ?? 1)}
+                                    style={css.chip}
+                                  >
+                                    {e.reference_file}:{e.reference_start_line ?? 1}
+                                  </span>
+                                ))}
+                              </div>
+                              <div style={css.nodeMore}>ficha completa y flujo →</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* "El flujo, paso a paso" */}
+          {!loading && !error && analysis && rels.length > 0 && (
+            <div style={css.rels}>
+              <h2 style={css.relsH2}>El flujo, paso a paso</h2>
+              {rels.map((r, i) => {
+                const srcComp = BYID.get(String(r.src_id));
+                const dstComp = BYID.get(String(r.dst_id));
+                return (
+                  <div key={i} style={css.rel}>
+                    <span style={css.relPair}>
+                      {srcComp?.name ?? r.src_name ?? String(r.src_id)}
+                      <span style={css.relArrow}> → </span>
+                      {dstComp?.name ?? r.dst_name ?? String(r.dst_id)}
+                    </span>
+                    <span style={css.relWhat}>{r.relation}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
-    </div>
+
+      {/* ── Code viewer overlay ──────────────────────────────────────────── */}
+      {viewerOpen && (
+        <div
+          style={css.modalOverlay}
+          onClick={e => { if (e.target === e.currentTarget) setViewerOpen(false); }}
+        >
+          <div style={css.viewer}>
+            <div style={css.viewerBar}>
+              <span>
+                {viewerPath}
+                {viewerStart > 0 ? `  ·  líneas ${viewerStart}–${viewerEnd}` : ''}
+              </span>
+              <button style={css.viewerClose} onClick={() => setViewerOpen(false)}>
+                ✕ Cerrar
+              </button>
+            </div>
+            <pre style={css.viewerPre}>
+              {viewerLoading && (
+                <span style={{ display: 'block', padding: '0 16px', color: T.muted }}>Cargando…</span>
+              )}
+              {!viewerLoading && !viewerCode && (
+                <span style={{ display: 'block', padding: '0 16px', color: '#f87171' }}>
+                  No se pudo cargar el archivo.
+                </span>
+              )}
+              {!viewerLoading && viewerCode && (() => {
+                const lines = viewerCode.split('\n');
+                return lines.map((line, i) => {
+                  const n = i + 1;
+                  const hl = viewerStart && n >= viewerStart && n <= viewerEnd;
+                  return (
+                    <span
+                      key={n}
+                      id={`arch-L${n}`}
+                      ref={el => {
+                        if (el) lineRefs.current.set(n, el);
+                        else lineRefs.current.delete(n);
+                      }}
+                      style={{
+                        display: 'block',
+                        padding: '0 16px 0 0',
+                        whiteSpace: 'pre',
+                        background: hl ? T.accentSoft : 'transparent',
+                      }}
+                    >
+                      <span style={{
+                        display: 'inline-block', width: 52, textAlign: 'right',
+                        paddingRight: 14, color: T.dim, userSelect: 'none',
+                      }}>
+                        {n}
+                      </span>
+                      {line}
+                    </span>
+                  );
+                });
+              })()}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* ── Component detail overlay ─────────────────────────────────────── */}
+      {detailOpen && detailComp && (
+        <div
+          style={css.modalOverlay}
+          onClick={e => { if (e.target === e.currentTarget) setDetailOpen(false); }}
+        >
+          <div style={css.detail}>
+            <div style={css.detailBar}>
+              <h2 style={css.detailH2}>{detailComp.name}</h2>
+              <button style={css.detailClose} onClick={() => setDetailOpen(false)}>
+                ✕ Cerrar
+              </button>
+            </div>
+            <div style={css.detailBody}>
+              <p style={css.detailDesc}>{detailComp.description}</p>
+
+              {/* Files */}
+              {(detailComp.key_entities ?? []).length > 0 && (
+                <>
+                  <div style={css.detailH4}>
+                    Archivos ({(detailComp.key_entities ?? []).length})
+                  </div>
+                  <div style={css.detailFiles}>
+                    {(detailComp.key_entities ?? []).map((e, i) => (
+                      <button
+                        key={i}
+                        style={css.chip}
+                        onClick={() => {
+                          setDetailOpen(false);
+                          openFile(
+                            e.reference_file,
+                            e.reference_start_line ?? 1,
+                            e.reference_end_line ?? 1,
+                          );
+                        }}
+                      >
+                        {e.reference_file}:{e.reference_start_line ?? 1}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Outgoing */}
+              {detailOuts.length > 0 && (
+                <>
+                  <div style={css.detailH4}>Llama a / envía →</div>
+                  {detailOuts.map((r, i) => {
+                    const dst = BYID.get(String(r.dst_id));
+                    return (
+                      <div key={i} style={css.flowline}>
+                        <span style={css.flowlineDir}>→</span>
+                        <span style={css.flowlineWho}>{dst?.name ?? r.dst_name ?? String(r.dst_id)}</span>
+                        <span style={css.flowlineWhat}>{r.relation}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* Incoming */}
+              {detailIns.length > 0 && (
+                <>
+                  <div style={css.detailH4}>Recibe de ←</div>
+                  {detailIns.map((r, i) => {
+                    const src = BYID.get(String(r.src_id));
+                    return (
+                      <div key={i} style={css.flowline}>
+                        <span style={css.flowlineDir}>←</span>
+                        <span style={css.flowlineWho}>{src?.name ?? r.src_name ?? String(r.src_id)}</span>
+                        <span style={css.flowlineWhat}>{r.relation}</span>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {!detailOuts.length && !detailIns.length && (
+                <div style={css.detailH4}>Sin flujos detectados</div>
+              )}
+
+              {/* Ver en el grafo */}
+              {graph && (detailComp.key_entities ?? []).length > 0 && (
+                <button
+                  style={css.viewInGraph}
+                  onClick={() => {
+                    setDetailOpen(false);
+                    viewInGraph(detailComp);
+                  }}
+                >
+                  Ver en el grafo →
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };

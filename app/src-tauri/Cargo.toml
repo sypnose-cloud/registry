@@ -1,6 +1,6 @@
 [package]
 name = "sypnose-registry"
-version = "2.1.1"
+version = "2.2.0"
 description = "Interactive code dependency graph visualizer"
 authors = ["Sypnose Cloud"]
 edition = "2021"
@@ -18,8 +18,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
-# For #[tokio::test] on the async ask_claude no-key path.
+# For #[tokio::test] on the async ask_claude no-key path and analysis tests.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+# For temp-dir in analysis tests.
+tempfile = "3"
 
 [dependencies]
 tauri = { version = "2", features = ["devtools"] }
